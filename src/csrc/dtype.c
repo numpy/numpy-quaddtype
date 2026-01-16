@@ -389,6 +389,71 @@ quadprec_fromstr(char *s, void *dptr, char **endptr, PyArray_Descr *descr_generi
     return 0;
 }
 
+/*
+ * Compare function for sorting operations (argsort, sort, etc.)
+ * Implements PyArray_CompareFunc.
+ * Returns: negative if a < b, positive if a > b, 0 if equal
+ */
+static int
+quadprec_compare(void *a, void *b, void *arr)
+{
+    PyArrayObject *array = (PyArrayObject *)arr;
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)PyArray_DESCR(array);
+    
+    if (descr->backend == BACKEND_SLEEF) {
+        Sleef_quad val_a = *(Sleef_quad *)a;
+        Sleef_quad val_b = *(Sleef_quad *)b;
+        
+        // NaN is considered greater than all other values for sorting
+        int a_is_nan = Sleef_iunordq1(val_a, val_a);
+        int b_is_nan = Sleef_iunordq1(val_b, val_b);
+        
+        if (a_is_nan && b_is_nan) {
+            return 0;
+        }
+        if (a_is_nan) {
+            return 1;  /* NaN goes to the end */
+        }
+        if (b_is_nan) {
+            return -1;
+        }
+        
+        if (Sleef_icmpltq1(val_a, val_b)) {
+            return -1;
+        }
+        if (Sleef_icmpgtq1(val_a, val_b)) {
+            return 1;
+        }
+        return 0;
+    }
+    else {
+        long double val_a = *(long double *)a;
+        long double val_b = *(long double *)b;
+        
+        // NaN is considered greater than all other values for sorting
+        int a_is_nan = (val_a != val_a);
+        int b_is_nan = (val_b != val_b);
+        
+        if (a_is_nan && b_is_nan) {
+            return 0;
+        }
+        if (a_is_nan) {
+            return 1;
+        }
+        if (b_is_nan) {
+            return -1;
+        }
+        
+        if (val_a < val_b) {
+            return -1;
+        }
+        if (val_a > val_b) {
+            return 1;
+        }
+        return 0;
+    }
+}
+
 static PyType_Slot QuadPrecDType_Slots[] = {
         {NPY_DT_ensure_canonical, &ensure_canonical},
         {NPY_DT_common_instance, &common_instance},
@@ -398,6 +463,7 @@ static PyType_Slot QuadPrecDType_Slots[] = {
         {NPY_DT_getitem, &quadprec_getitem},
         {NPY_DT_default_descr, &quadprec_default_descr},
         {NPY_DT_get_constant, &quadprec_get_constant},
+        {NPY_DT_PyArray_ArrFuncs_compare, &quadprec_compare},
         {NPY_DT_PyArray_ArrFuncs_fill, &quadprec_fill},
         {NPY_DT_PyArray_ArrFuncs_scanfunc, &quadprec_scanfunc},
         {NPY_DT_PyArray_ArrFuncs_fromstr, &quadprec_fromstr},
