@@ -5748,3 +5748,60 @@ def test_quadprecision_large_exponents(val, pow):
     value_str = mp.nstr(mp.mpf(str(value)), 33)
     expected_str = mp.nstr(mp_value, 33)
     assert value_str == expected_str, f"QuadPrecision({val}) ** {pow} = {value_str}, expected {expected_str}"
+    
+class TestSortingOperations:
+    """Test suite for sorting operations using the compare slot."""
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("input_arr,expected_sorted,expected_indices", [
+        # Basic integers: [3, 1, 4, 1, 5, 9, 2, 6] -> sorted: [1, 1, 2, 3, 4, 5, 6, 9]
+        ([3, 1, 4, 1, 5, 9, 2, 6], [1, 1, 2, 3, 4, 5, 6, 9], [1, 3, 6, 0, 2, 4, 7, 5]),
+        # Negative numbers
+        ([3, -1, 4, -5, 2, -6], [-6, -5, -1, 2, 3, 4], [5, 3, 1, 4, 0, 2]),
+        # Floating-point values
+        ([3.14, 1.41, 2.72, 0.57], [0.57, 1.41, 2.72, 3.14], [3, 1, 2, 0]),
+        # Single element
+        ([42], [42], [0]),
+        # Empty array
+        ([], [], []),
+    ])
+    def test_sort_and_argsort(self, backend, input_arr, expected_sorted, expected_indices):
+        """Test sort and argsort with various inputs."""
+        x = np.array(input_arr, dtype=QuadPrecDType(backend=backend))
+        
+        # Test sort
+        sorted_x = np.sort(x)
+        expected = np.array(expected_sorted, dtype=QuadPrecDType(backend=backend))
+        np.testing.assert_array_equal(sorted_x, expected)
+        
+        # Test argsort
+        indices = np.argsort(x)
+        np.testing.assert_array_equal(indices, np.array(expected_indices))
+        # Verify argsort returns integer type
+        assert np.issubdtype(indices.dtype, np.integer)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("input_arr,check_fn", [
+        # NaN should be sorted to the end
+        ([3, float('nan'), 1, 2], lambda s: s[0] == 1 and s[1] == 2 and s[2] == 3 and np.isnan(s[3])),
+        # Inf handling
+        ([3, float('inf'), 1, float('-inf'), 2], 
+         lambda s: s[0] == float('-inf') and s[1] == 1 and s[2] == 2 and s[3] == 3 and s[4] == float('inf')),
+        # Multiple NaNs
+        ([float('nan'), 1, float('nan'), 2], lambda s: s[0] == 1 and s[1] == 2 and np.isnan(s[2]) and np.isnan(s[3])),
+    ])
+    def test_sort_special_values(self, backend, input_arr, check_fn):
+        """Test sorting with NaN and Inf values."""
+        x = np.array(input_arr, dtype=QuadPrecDType(backend=backend))
+        sorted_x = np.sort(x)
+        assert check_fn(sorted_x)
+
+    @pytest.mark.parametrize("kind", ["quicksort", "mergesort", "heapsort", "stable"])
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_sort_algorithms(self, backend, kind):
+        """Test that different sorting algorithms work with the compare function."""
+        x = np.array([5, 2, 8, 1, 9, 3], dtype=QuadPrecDType(backend=backend))
+        sorted_x = np.sort(x, kind=kind)
+        expected = np.array([1, 2, 3, 5, 8, 9], dtype=QuadPrecDType(backend=backend))
+        np.testing.assert_array_equal(sorted_x, expected)
+
