@@ -5772,5 +5772,15 @@ def test_argmax_argmin(backend):
     # 2D with axis
     x = np.array([[1, 5, 3], [4, 2, 6]], dtype=QuadPrecDType(backend=backend))
     assert np.argmax(x) == 5  # flattened
+    assert np.argmin(x) == 0  # flattened
     np.testing.assert_array_equal(np.argmax(x, axis=0), [1, 0, 1])
+    np.testing.assert_array_equal(np.argmin(x, axis=0), [0, 1, 0])
     np.testing.assert_array_equal(np.argmax(x, axis=1), [1, 2])
+    np.testing.assert_array_equal(np.argmin(x, axis=1), [0, 1])
+    
+    # Empty array raises ValueError
+    x = np.array([], dtype=QuadPrecDType(backend=backend))
+    with pytest.raises(ValueError):
+        np.argmax(x)
+    with pytest.raises(ValueError):
+        np.argmin(x)

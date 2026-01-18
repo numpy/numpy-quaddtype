@@ -472,9 +472,10 @@ quadprec_argmax(char *data, npy_intp n, npy_intp *max_ind, void *arr)
     if (descr->backend == BACKEND_SLEEF) {
         // Find first non-NaN value as initial max
         npy_intp start = 0;
+        Sleef_quad max_val;
         for (start = 0; start < n; start++) {
-            Sleef_quad val = *(Sleef_quad *)(data + start * elsize);
-            if (!Sleef_iunordq1(val, val)) {
+            max_val = *(Sleef_quad *)(data + start * elsize);
+            if (!Sleef_iunordq1(max_val, max_val)) {
                 *max_ind = start;
                 break;
             }
@@ -489,7 +490,6 @@ quadprec_argmax(char *data, npy_intp n, npy_intp *max_ind, void *arr)
         // Find maximum
         for (npy_intp i = start + 1; i < n; i++) {
             Sleef_quad val = *(Sleef_quad *)(data + i * elsize);
-            Sleef_quad max_val = *(Sleef_quad *)(data + (*max_ind) * elsize);
             
             // Skip NaN values
             if (Sleef_iunordq1(val, val)) {
@@ -497,6 +497,7 @@ quadprec_argmax(char *data, npy_intp n, npy_intp *max_ind, void *arr)
             }
             
             if (Sleef_icmpgtq1(val, max_val)) {
+                max_val = val;
                 *max_ind = i;
             }
         }
@@ -504,9 +505,10 @@ quadprec_argmax(char *data, npy_intp n, npy_intp *max_ind, void *arr)
     else {
         // Find first non-NaN value as initial max
         npy_intp start = 0;
+        long double max_val;
         for (start = 0; start < n; start++) {
-            long double val = *(long double *)(data + start * elsize);
-            if (!isnan(val)) {
+            max_val = *(long double *)(data + start * elsize);
+            if (!isnan(max_val)) {
                 *max_ind = start;
                 break;
             }
@@ -521,7 +523,6 @@ quadprec_argmax(char *data, npy_intp n, npy_intp *max_ind, void *arr)
         // Find maximum
         for (npy_intp i = start + 1; i < n; i++) {
             long double val = *(long double *)(data + i * elsize);
-            long double max_val = *(long double *)(data + (*max_ind) * elsize);
             
             // Skip NaN values
             if (isnan(val)) {
@@ -529,6 +530,7 @@ quadprec_argmax(char *data, npy_intp n, npy_intp *max_ind, void *arr)
             }
             
             if (val > max_val) {
+                max_val = val;
                 *max_ind = i;
             }
         }
@@ -554,9 +556,10 @@ quadprec_argmin(char *data, npy_intp n, npy_intp *min_ind, void *arr)
     if (descr->backend == BACKEND_SLEEF) {
         // Find first non-NaN value as initial min
         npy_intp start = 0;
+        Sleef_quad min_val;
         for (start = 0; start < n; start++) {
-            Sleef_quad val = *(Sleef_quad *)(data + start * elsize);
-            if (!Sleef_iunordq1(val, val)) {
+            min_val = *(Sleef_quad *)(data + start * elsize);
+            if (!Sleef_iunordq1(min_val, min_val)) {
                 *min_ind = start;
                 break;
             }
@@ -571,7 +574,6 @@ quadprec_argmin(char *data, npy_intp n, npy_intp *min_ind, void *arr)
         // Find minimum
         for (npy_intp i = start + 1; i < n; i++) {
             Sleef_quad val = *(Sleef_quad *)(data + i * elsize);
-            Sleef_quad min_val = *(Sleef_quad *)(data + (*min_ind) * elsize);
             
             // Skip NaN values
             if (Sleef_iunordq1(val, val)) {
@@ -579,6 +581,7 @@ quadprec_argmin(char *data, npy_intp n, npy_intp *min_ind, void *arr)
             }
             
             if (Sleef_icmpltq1(val, min_val)) {
+                min_val = val;
                 *min_ind = i;
             }
         }
@@ -586,9 +589,10 @@ quadprec_argmin(char *data, npy_intp n, npy_intp *min_ind, void *arr)
     else {
         // Find first non-NaN value as initial min
         npy_intp start = 0;
+        long double min_val;
         for (start = 0; start < n; start++) {
-            long double val = *(long double *)(data + start * elsize);
-            if (!isnan(val)) {
+            min_val = *(long double *)(data + start * elsize);
+            if (!isnan(min_val)) {
                 *min_ind = start;
                 break;
             }
@@ -603,7 +607,6 @@ quadprec_argmin(char *data, npy_intp n, npy_intp *min_ind, void *arr)
         // Find minimum
         for (npy_intp i = start + 1; i < n; i++) {
             long double val = *(long double *)(data + i * elsize);
-            long double min_val = *(long double *)(data + (*min_ind) * elsize);
             
             // Skip NaN values
             if (isnan(val)) {
@@ -611,6 +614,7 @@ quadprec_argmin(char *data, npy_intp n, npy_intp *min_ind, void *arr)
             }
             
             if (val < min_val) {
+                min_val = val;
                 *min_ind = i;
             }
         }
