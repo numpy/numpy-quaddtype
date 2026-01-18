@@ -59,7 +59,13 @@ if sleef_dep.found() and sleef_dep.type_name() != 'internal' and sleef_dep.versi
       fallback_reason = 'System-wide SLEEF installation found but a test for quad precision support failed.'
     endif
   else
-    fallback_reason = 'System-wide SLEEF installation does not have a sleefquad library.'
+    if not sleefquad_lib.found() and not tlfloat_lib.found()
+      fallback_reason = 'System-wide SLEEF installation does not have sleefquad and tlfloat libraries.'
+    elif not sleefquad_lib.found()
+      fallback_reason = 'System-wide SLEEF installation does not have the sleefquad library.'
+    else
+      fallback_reason = 'System-wide SLEEF installation does not have the tlfloat library.'
+    endif
   endif
 else
   if sleef_dep.found() and sleef_dep.type_name() != 'internal'
