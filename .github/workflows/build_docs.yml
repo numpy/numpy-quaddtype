@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - main
-  # pull_request:
-  #   paths:
-  #     - 'docs/**'
-  #     - 'src/**'
-  #     - '.github/workflows/build_docs.yml'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch: # Make sure this job can be triggered manually
 
 jobs:
@@ -27,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "numpy @ git+https://github.com/numpy/numpy.git" pytest meson meson-python
+          python -m pip install numpy pytest meson meson-python
       - name: Build quaddtype package
         run: |
           python -m pip install . -v
@@ -41,5 +39,6 @@ jobs:
         with:
           path: "./docs/_build/html"
       - name: Deploy to GitHub Pages
+        if: github.event_name != 'pull_request'
         id: deployment
         uses: actions/deploy-pages@v4
