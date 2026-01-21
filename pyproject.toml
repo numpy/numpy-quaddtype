@@ -42,6 +42,9 @@ docs = [
     "sphinx",
     "pydata-sphinx-theme",
     "myst-parser",
+    "sphinx-design",
+    "sphinx-copybutton",
+    "sphinxcontrib-katex",
 ]
 
 [project.urls]
