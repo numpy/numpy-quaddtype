@@ -335,7 +335,22 @@ create_quad_comparison_ufunc(PyObject *numpy, const char *ufunc_name)
         return -1;
     }
 
-    PyObject *DTypes = PyTuple_Pack(3, &PyArrayDescr_Type, &PyArrayDescr_Type, &PyArray_BoolDType);
+    // Register promoter for (QuadPrecDType, Any, Bool) - needed for mixed-type comparisons
+    PyObject *DTypes = PyTuple_Pack(3, &QuadPrecDType, &PyArrayDescr_Type, &PyArray_BoolDType);
+    if (DTypes == 0) {
+        Py_DECREF(promoter_capsule);
+        return -1;
+    }
+
+    if (PyUFunc_AddPromoter(ufunc, DTypes, promoter_capsule) < 0) {
+        Py_DECREF(promoter_capsule);
+        Py_DECREF(DTypes);
+        return -1;
+    }
+    Py_DECREF(DTypes);
+
+    // Register promoter for (Any, QuadPrecDType, Bool) - needed for reverse mixed-type comparisons
+    DTypes = PyTuple_Pack(3, &PyArrayDescr_Type, &QuadPrecDType, &PyArray_BoolDType);
     if (DTypes == 0) {
         Py_DECREF(promoter_capsule);
         return -1;

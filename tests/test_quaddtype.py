@@ -5868,3 +5868,13 @@ def test_argmax_argmin(backend):
         np.argmax(x)
     with pytest.raises(ValueError):
         np.argmin(x)
+
+def test_logical_reduce_on_non_quad_arrays():
+    """Test that logical reduce operations work on non-QuadPrecision arrays.
+    
+    Regression test for https://github.com/numpy/numpy-quaddtype/pull/60
+    where registering comparison promoters for QuadPrecDType interfered
+    with standard NumPy operations like np.logical_or.reduce(np.arange(10.)).
+    """
+    result = np.logical_or.reduce(np.arange(10.))
+    assert result == True
