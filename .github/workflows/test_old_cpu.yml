@@ -1,7 +1,7 @@
-name: Test on Older CPUs (x86-64-v2)
+name: Test on Older CPUs (x86_64-v2)
 
 # This workflow tests numpy-quaddtype on older x86 CPUs using Intel SDE.
-# It ensures compatibility with x86-64-v2 baseline CPUs (e.g., Sandy Bridge)
+# It ensures compatibility with x86_64-v2 baseline CPUs (e.g., Sandy Bridge)
 # that don't have AVX2/FMA support.
 
 on:
@@ -12,9 +12,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  test_sandy_bridge:
-    name: Test on Sandy Bridge (x86-64-v2)
+  test_old_cpu:
+    name: Test on ${{ matrix.cpu[1] }}
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cpu:
+          - ['snb', 'Sandy Bridge (x86_64-v2)']
+          - ['hsw', 'Haswell (x86_64-v3)']
     steps:
       - uses: actions/checkout@v6
         with:
@@ -47,73 +52,20 @@ jobs:
         run: |
           pip install . --no-build-isolation -v
 
-      - name: Test import on Sandy Bridge (x86-64-v2)
+      - name: Test import on ${{ matrix.cpu[1] }}
         run: |
-          echo "Testing basic import on Sandy Bridge..."
-          sde -snb -- python -c "
+          echo "Testing basic import on ${{ matrix.cpu[1] }}..."
+          sde -${{ matrix.cpu[0] }} -- python -c "
           import numpy as np
           print('NumPy version:', np.__version__)
           from numpy_quaddtype import QuadPrecDType
           print('QuadPrecDType imported successfully!')
           arr = np.zeros(3, dtype=QuadPrecDType())
           print('Created quad array:', arr)
-          print('SUCCESS: No illegal instruction on Sandy Bridge!')
+          print('SUCCESS: Works on ${{ matrix.cpu[1] }}!')
           "
 
-      - name: Run tests on Sandy Bridge
+      - name: Run tests on ${{ matrix.cpu[1] }}
         run: |
           pip install pytest mpmath
-          sde -snb -- python -m pytest tests/ -v --tb=short
-
-  test_haswell:
-    name: Test on Haswell (x86-64-v3)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install Intel SDE
-        run: |
-          curl -o /tmp/sde.tar.xz https://downloadmirror.intel.com/859732/sde-external-9.58.0-2025-06-16-lin.tar.xz
-          mkdir /tmp/sde && tar -xvf /tmp/sde.tar.xz -C /tmp/sde/
-          sudo mv /tmp/sde/* /opt/sde && sudo ln -s /opt/sde/sde64 /usr/bin/sde
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y cmake gcc g++ make git pkg-config
-
-      - name: Install Python dependencies
-        run: |
-          pip install -U pip
-          pip install numpy meson meson-python ninja pytest
-
-      - name: Build numpy-quaddtype
-        env:
-          LDFLAGS: "-fopenmp"
-        run: |
-          pip install . --no-build-isolation -v
-
-      - name: Test import on Haswell (x86-64-v3)
-        run: |
-          echo "Testing basic import on Haswell..."
-          sde -hsw -- python -c "
-          import numpy as np
-          print('NumPy version:', np.__version__)
-          from numpy_quaddtype import QuadPrecDType
-          print('QuadPrecDType imported successfully!')
-          arr = np.zeros(3, dtype=QuadPrecDType())
-          print('Created quad array:', arr)
-          print('SUCCESS: Works on Haswell!')
-          "
-
-      - name: Run tests on Haswell
-        run: |
-          pip install pytest mpmath
-          sde -hsw -- python -m pytest tests/ -v --tb=short
+          sde -${{ matrix.cpu[0] }} -- python -m pytest tests/ -v --tb=short
