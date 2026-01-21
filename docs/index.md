@@ -4,6 +4,7 @@
 :target: https://pypi.org/project/numpy-quaddtype/
 :alt: PyPI version
 ```
+
 ```{image} https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg
 :alt: Python versions
 ```
@@ -18,6 +19,7 @@ NumPy QuadDType provides IEEE 754 quadruple-precision (binary128) floating-point
 :gutter: 2
 
 :::{grid-item-card} 🎯 True Quad Precision
+
 <!--- :link: user_guide/precision
 :link-type: doc  -->
 
@@ -25,6 +27,7 @@ NumPy QuadDType provides IEEE 754 quadruple-precision (binary128) floating-point
 :::
 
 :::{grid-item-card} 🔌 NumPy Integration
+
 <!--- :link: user_guide/arrays
 :link-type: doc  -->
 
@@ -32,6 +35,7 @@ Works seamlessly with NumPy arrays, ufuncs, and broadcasting.
 :::
 
 :::{grid-item-card} ⚡ SIMD Optimized
+
 <!--- :link: user_guide/performance
 :link-type: doc  -->
 
@@ -46,6 +50,7 @@ Full suite of math functions: trigonometric, exponential, logarithmic, and more.
 :::
 
 :::{grid-item-card} 🔀 Dual Backend
+
 <!--- :link: user_guide/backends
 :link-type: doc  -->
 
@@ -53,6 +58,7 @@ Choose between SLEEF (default) or native longdouble backends.
 :::
 
 :::{grid-item-card} 🧵 Thread-Safe
+
 <!--- :link: user_guide/threading
 :link-type: doc  -->
 
@@ -67,6 +73,18 @@ Full support for Python's free-threading (GIL-free) mode.
 
 ```bash
 pip install numpy-quaddtype
+```
+
+Or with conda-forge:
+
+```bash
+conda install numpy_quaddtype
+```
+
+Or with mamba:
+
+```bash
+mamba install numpy_quaddtype
 ```
 
 ### Basic Usage
@@ -99,6 +117,7 @@ Standard double precision (float64) provides approximately 15-16 significant dec
 :maxdepth: 2
 :hidden:
 
+installation
 api/index
 ```
 

@@ -32,6 +32,18 @@ pip install "numpy>=2.4"
 pip install numpy-quaddtype
 ```
 
+Or with conda-forge:
+
+```bash
+conda install numpy_quaddtype
+```
+
+Or with mamba:
+
+```bash
+mamba install numpy_quaddtype
+```
+
 Or grab the development version with
 
 ```bash
@@ -121,7 +133,6 @@ python -m pytest tests
 6. **QBLAS Disabled**: QuadBLAS optimization is automatically disabled on Windows builds due to MSVC compatibility issues. This is handled by the `-DDISABLE_QUADBLAS` compiler flag.
 
 7. **Visual Studio Version**: The instructions assume Visual Studio 2022. For other versions, adjust the generator string:
-
    - VS 2019: `"Visual Studio 16 2019"`
    - VS 2017: `"Visual Studio 15 2017"`
 
