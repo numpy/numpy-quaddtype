@@ -1,4 +1,4 @@
-project('sleef')
+project('sleef', meson_version: '>=1.1')
 
 cmake = find_program('cmake')
 ninja = find_program('ninja', 'make', required: false)
