@@ -1,4 +1,6 @@
-project('numpy_quaddtype', 'c', 'cpp', default_options : ['cpp_std=c++20', 'b_pie=true'])
+project('numpy_quaddtype', 'c', 'cpp',
+        default_options : ['cpp_std=c++20', 'b_pie=true'],
+        meson_version: '>=1.1')
 
 py_mod = import('python')
 py = py_mod.find_installation()

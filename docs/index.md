@@ -113,6 +113,10 @@ Standard double precision (float64) provides approximately 15-16 significant dec
 - **Financial Calculations**: High-precision arithmetic for regulatory compliance
 - **Validation**: Checking accuracy of lower-precision implementations
 
+Additionally, NumPy's existing `np.longdouble` or `np.float128` (alias for `np.longdouble`) suffers from cross-platform inconsistency: it is 64-bit on Windows and macOS, 80-bit on Linux x86, and varies on other architectures. NumPy QuadDType solves this by providing **true IEEE 754 quadruple precision (128-bit)** consistently across all platforms.
+
+For more details on the motivation and technical implementation, see the [Quansight Labs blog post](https://labs.quansight.org/blog/numpy-quaddtype-blog).
+
 ```{toctree}
 :maxdepth: 2
 :hidden:

@@ -1,4 +1,4 @@
-project('qblas', version: '1.0.0')
+project('qblas', meson_version: '>=1.1')
 
 qblas_inc = include_directories('include')
 

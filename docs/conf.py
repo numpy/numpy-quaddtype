@@ -3,14 +3,17 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+from datetime import datetime
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'NumPy QuadDType'
-copyright = '2025, NumPy Community'
-author = 'NumPy Community'
-release = '0.2.0'
-version = '0.2.0'
+year = datetime.now().year
+copyright = f'2024-{year}, NumPy Developers'
+author = 'Written by the NumPy community'
+release = '1.0.0'
+version = '1.0.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
