@@ -14,7 +14,7 @@ build:
     export CXXFLAGS="${CXXFLAGS} -I${WASM_LIBRARY_DIR}/include -sRELOCATABLE=1";
     export LDFLAGS="${CFLAGS} -L${WASM_LIBRARY_DIR}/lib";
 about:
-  home: https://github.com/numpy/numpy-user-dtypes/tree/main/quaddtype
+  home: https://github.com/numpy/numpy-quaddtype
   PyPI: https://pypi.org/project/numpy-quaddtype
   summary: Quad (128-bit) float dtype for numpy
   license: BSD-3-Clause
