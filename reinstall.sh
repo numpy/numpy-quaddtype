@@ -10,6 +10,7 @@ rm -rf .mesonpy-*
 
 python -m pip uninstall -y numpy_quaddtype
 python -m pip install . -vv 2>&1 | tee build_log.txt
+# pip install . --no-build-isolation -v -Csetup-args=-Ddisable_fma=true 2>&1 | tee build_log.txt
 
 # for debugging and TSAN builds, comment the above line and uncomment all below:
 # export CFLAGS="-fsanitize=thread -g -O0" 

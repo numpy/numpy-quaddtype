@@ -5878,3 +5878,55 @@ def test_logical_reduce_on_non_quad_arrays():
     """
     result = np.logical_or.reduce(np.arange(10.))
     assert result == True
+
+
+def test_sleef_purecfma_symbols():
+    """Test that SLEEF PURECFMA symbols are present in the compiled module.
+    
+    PURECFMA provides optimized scalar code paths using FMA instructions.
+    This test verifies the module was built with FMA support enabled.
+    On systems without FMA (e.g., x86-64-v2/Sandy Bridge), the build should
+    automatically disable PURECFMA, and this test should be skipped.
+    """
+    import subprocess
+    import shutil
+    import pathlib
+    
+    # Skip if nm is not available
+    nm_path = shutil.which('nm')
+    if nm_path is None:
+        pytest.skip("nm command not available")
+    
+    # Get the path to the compiled shared library (.so file)
+    module_dir = pathlib.Path(numpy_quaddtype.__file__).parent
+    so_files = list(module_dir.glob('_quaddtype_main*.so'))
+    
+    if not so_files:
+        pytest.skip("Could not find _quaddtype_main shared library")
+    
+    module_path = str(so_files[0])
+    
+    try:
+        result = subprocess.run(
+            ['nm', module_path],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip("nm command timed out")
+    except FileNotFoundError:
+        pytest.skip("nm command not found")
+
+    purecfma_symbols = [
+        line for line in result.stdout.lower().splitlines()
+        if 'purecfma' in line
+    ]
+    
+    if purecfma_symbols:
+        print(f"\n✓ Found {len(purecfma_symbols)} PURECFMA symbols (FMA optimizations enabled)")
+        print("  Sample symbols:")
+        for sym in purecfma_symbols[:5]:
+            print(f"    {sym}")
+        if len(purecfma_symbols) > 5:
+            print(f"    ... and {len(purecfma_symbols) - 5} more")

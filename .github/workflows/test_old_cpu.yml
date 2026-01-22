@@ -51,7 +51,13 @@ jobs:
         env:
           LDFLAGS: "-fopenmp"
         run: |
-          pip install . --no-build-isolation -v
+          # For Sandy Bridge (x86-64-v2), we need to disable FMA code paths
+          # since FMA instructions are not available on that microarchitecture
+          if [ "${{ matrix.cpu[0] }}" = "snb" ]; then
+            pip install . --no-build-isolation -v -Csetup-args=-Ddisable_fma=true
+          else
+            pip install . --no-build-isolation -v
+          fi
 
       - name: Test import on ${{ matrix.cpu[1] }}
         run: |
@@ -69,4 +75,4 @@ jobs:
       - name: Run tests on ${{ matrix.cpu[1] }}
         run: |
           pip install pytest mpmath
-          sde -${{ matrix.cpu[0] }} -- python -m pytest tests/ -v --tb=short
+          sde -${{ matrix.cpu[0] }} -- python -m pytest tests/ -v --tb=short -v -s

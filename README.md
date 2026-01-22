@@ -19,6 +19,8 @@ A cross-platform Quad (128-bit) float Data-Type for NumPy.
   - [Installation from source](#installation-from-source)
     - [Linux/Unix/macOS](#linuxunixmacos)
     - [Windows](#windows)
+  - [Build Options](#build-options)
+    - [Disabling FMA (Fused Multiply-Add)](#disabling-fma-fused-multiply-add)
   - [Building with ThreadSanitizer (TSan)](#building-with-threadsanitizer-tsan)
   - [Building the documentation](#building-the-documentation)
     - [Serving the documentation](#serving-the-documentation)
@@ -137,6 +139,23 @@ python -m pytest tests
    - VS 2017: `"Visual Studio 15 2017"`
 
 8. **Architecture**: The instructions are for x64. For x86 builds, change `-A x64` to `-A Win32`.
+
+## Build Options
+
+### Disabling FMA (Fused Multiply-Add)
+
+On older x86-64 CPUs without FMA support (e.g., Sandy Bridge / x86_64-v2), the SLEEF's `PURECFMA` scalar code path will cause illegal instruction errors. By default, FMA support is auto-detected at build time, but you can explicitly disable it:
+
+```bash
+pip install . -Csetup-args=-Ddisable_fma=true
+```
+
+This is a workaround for a [SLEEF issue](https://github.com/shibatch/sleef/issues/707) where `PURECFMA` scalar functions are unconditionally compiled with FMA instructions even on systems that don't support them.
+
+**When to use this option:**
+- Building on or for x86_64-v2 (Sandy Bridge era) CPUs
+- Cross-compiling for older x86_64 targets
+- Running in emulators/VMs that don't expose FMA capability
 
 ## Building with ThreadSanitizer (TSan)
 

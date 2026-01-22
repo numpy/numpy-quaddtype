@@ -3,6 +3,7 @@ directory=sleef
 url=https://github.com/shibatch/sleef.git
 revision=3.9.0
 patch_directory=sleef
+diff_files=sleef/fix-purecfma-scalar-x86.patch
 
 [provide]
 sleef = sleef_dep
