@@ -6,6 +6,7 @@ import operator
 from mpmath import mp
 
 import numpy_quaddtype
+from numpy.testing import IS_WASM
 from numpy_quaddtype import QuadPrecDType, QuadPrecision
 from numpy_quaddtype import pi as quad_pi
 
@@ -5891,7 +5892,10 @@ def test_sleef_purecfma_symbols():
     import subprocess
     import shutil
     import pathlib
-    
+
+    if IS_WASM:
+        pytest.skip("no subprocess in wasm")
+
     # Skip if nm is not available
     nm_path = shutil.which('nm')
     if nm_path is None:
