@@ -50,7 +50,7 @@ jobs:
         run: |
           python -m cibuildwheel --output-dir wheelhouse
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           path: ./wheelhouse/*.whl
           name: wheels-linux
@@ -109,7 +109,7 @@ jobs:
         run: |
           python -m cibuildwheel --output-dir wheelhouse
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           path: ./wheelhouse/*.whl
           name: wheels-${{ matrix.os }}
@@ -164,7 +164,7 @@ jobs:
           python -m cibuildwheel --output-dir wheelhouse
           if (-not (Test-Path wheelhouse/*.whl)) { throw "Wheel was not created" }
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           path: ./wheelhouse/*.whl
           name: wheels-windows-${{ matrix.architecture }}
@@ -198,7 +198,7 @@ jobs:
           pytest -s tests
 
       - name: Upload SDist artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: ./dist/*.tar.gz
@@ -224,7 +224,7 @@ jobs:
 
     steps:
       - name: Download all workflow run artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: "*"
           path: dist
