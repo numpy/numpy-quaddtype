@@ -5997,3 +5997,25 @@ def test_sleef_purecfma_symbols():
             print(f"    {sym}")
         if len(purecfma_symbols) > 5:
             print(f"    ... and {len(purecfma_symbols) - 5} more")
+
+
+def test_empty_construct():
+    assert QuadPrecision() == QuadPrecision(0) == 0
+
+
+def test_pandas_strrep():
+    """Test that we can construct a pandas data frame with quad precision columns
+
+    Make sure the string representation can be generated
+    """
+    import pandas as pd
+
+    BIG_NUMBER=123456789098765432123456789
+    x = np.arange(500, dtype=np.float64) * BIG_NUMBER
+    y = np.arange(500, dtype=QuadPrecDType()) * BIG_NUMBER
+    df = pd.DataFrame({"col1": x, "col2": y})
+    assert isinstance(str(df), str) # Make sure this doesn't fail
+    assert df["col1"].dtype == np.float64
+    assert df["col2"].dtype == QuadPrecDType()
+    assert df["col1"].iloc[499] != QuadPrecision(499 * BIG_NUMBER)
+    assert df["col2"].iloc[499] == QuadPrecision(499 * BIG_NUMBER)
