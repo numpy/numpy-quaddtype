@@ -58,6 +58,8 @@ jobs:
           else
             pip install . --no-build-isolation -v
           fi
+          # Install the test dependencies
+          pip install .[test]
 
       - name: Test import on ${{ matrix.cpu[1] }}
         run: |
@@ -74,5 +76,4 @@ jobs:
 
       - name: Run tests on ${{ matrix.cpu[1] }}
         run: |
-          pip install pytest mpmath
           sde -${{ matrix.cpu[0] }} -- python -m pytest tests/ -v --tb=short -v -s
