@@ -36,7 +36,8 @@ dependencies = [
 test = [
     "pytest",
     "mpmath",
-    "pytest-run-parallel"
+    "pytest-run-parallel",
+    "pandas"
 ]
 
 docs = [

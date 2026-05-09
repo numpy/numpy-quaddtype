@@ -5997,3 +5997,49 @@ def test_sleef_purecfma_symbols():
             print(f"    {sym}")
         if len(purecfma_symbols) > 5:
             print(f"    ... and {len(purecfma_symbols) - 5} more")
+
+
+def test_empty_construct():
+    # Default backend (sleef): no-arg construction yields zero.
+    assert QuadPrecision() == QuadPrecision(0) == 0
+    assert QuadPrecision().dtype == QuadPrecDType()
+    assert str(QuadPrecision()) == str(QuadPrecision(0))
+
+    # longdouble backend: no-arg construction also yields zero.
+    assert QuadPrecision(backend="longdouble") == QuadPrecision(0, backend="longdouble") == 0
+    assert QuadPrecision(backend="longdouble").dtype == QuadPrecDType(backend="longdouble")
+
+    # Round-trip through dtype.type(), this is the call path pandas uses
+    # in `_take_preprocess_indexer_and_fill_value` (see issue #83).
+    for backend in ("sleef", "longdouble"):
+        dtype = QuadPrecDType(backend=backend)
+        zero = dtype.type()
+        assert isinstance(zero, QuadPrecision)
+        assert zero == 0
+
+    # Invalid backend must still raise even when no value is supplied.
+    with pytest.raises(ValueError):
+        QuadPrecision(backend="bogus")
+
+    # Explicit None should NOT be silently treated as zero, it must go
+    # through QuadPrecision_from_object and raise.
+    with pytest.raises((TypeError, ValueError)):
+        QuadPrecision(None)
+
+
+def test_pandas_strrep():
+    """Test that we can construct a pandas data frame with quad precision columns
+
+    Make sure the string representation can be generated
+    """
+    import pandas as pd
+
+    BIG_NUMBER=123456789098765432123456789
+    x = np.arange(500, dtype=np.float64) * BIG_NUMBER
+    y = np.arange(500, dtype=QuadPrecDType()) * BIG_NUMBER
+    df = pd.DataFrame({"col1": x, "col2": y})
+    assert isinstance(str(df), str) # Make sure this doesn't fail
+    assert df["col1"].dtype == np.float64
+    assert df["col2"].dtype == QuadPrecDType()
+    assert df["col1"].iloc[499] != QuadPrecision(499 * BIG_NUMBER)
+    assert df["col2"].iloc[499] == QuadPrecision(499 * BIG_NUMBER)
