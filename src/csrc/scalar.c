@@ -281,7 +281,7 @@ QuadPrecision_from_object(PyObject *value, QuadBackendType backend)
 static PyObject *
 QuadPrecision_new(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 {
-    PyObject *value = 0;
+    PyObject *value = NULL;
     const char *backend_str = "sleef";
     static char *kwlist[] = {"value", "backend", NULL};
 
@@ -299,7 +299,7 @@ QuadPrecision_new(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
     }
 
     if (value == NULL) {
-      return (PyObject *)QuadPrecision_raw_new(backend);
+        return (PyObject *)QuadPrecision_raw_new(backend);
     }
     return (PyObject *)QuadPrecision_from_object(value, backend);
 }

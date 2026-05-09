@@ -6000,7 +6000,31 @@ def test_sleef_purecfma_symbols():
 
 
 def test_empty_construct():
+    # Default backend (sleef): no-arg construction yields zero.
     assert QuadPrecision() == QuadPrecision(0) == 0
+    assert QuadPrecision().dtype == QuadPrecDType()
+    assert str(QuadPrecision()) == str(QuadPrecision(0))
+
+    # longdouble backend: no-arg construction also yields zero.
+    assert QuadPrecision(backend="longdouble") == QuadPrecision(0, backend="longdouble") == 0
+    assert QuadPrecision(backend="longdouble").dtype == QuadPrecDType(backend="longdouble")
+
+    # Round-trip through dtype.type(), this is the call path pandas uses
+    # in `_take_preprocess_indexer_and_fill_value` (see issue #83).
+    for backend in ("sleef", "longdouble"):
+        dtype = QuadPrecDType(backend=backend)
+        zero = dtype.type()
+        assert isinstance(zero, QuadPrecision)
+        assert zero == 0
+
+    # Invalid backend must still raise even when no value is supplied.
+    with pytest.raises(ValueError):
+        QuadPrecision(backend="bogus")
+
+    # Explicit None should NOT be silently treated as zero, it must go
+    # through QuadPrecision_from_object and raise.
+    with pytest.raises((TypeError, ValueError)):
+        QuadPrecision(None)
 
 
 def test_pandas_strrep():
