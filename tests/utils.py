@@ -96,3 +96,17 @@ def arrays_equal_with_nan(a, b, rtol=1e-15, atol=1e-15):
                 return False
     
     return True
+
+
+def _q(v):
+    return QuadPrecision(str(float(v)), backend='sleef')
+
+
+def _qarr(values, shape=None):
+    """Build an n-D QuadPrecision array from a (possibly nested) Python sequence."""
+    dt = QuadPrecDType(backend='sleef')
+    arr = np.asarray(values, dtype=np.float64)
+    if shape is not None:
+        arr = arr.reshape(shape)
+    flat = [_q(v) for v in arr.ravel().tolist()]
+    return np.array(flat, dtype=dt).reshape(arr.shape)

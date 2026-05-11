@@ -315,6 +315,154 @@ quad_matmul_strided_loop_unaligned(PyArrayMethod_Context *context, char *const d
     return 0;
 }
 
+// vecdot: signature (n),(n)->()
+
+static int
+quad_vecdot_strided_loop_aligned(PyArrayMethod_Context *context, char *const data[],
+                                 npy_intp const dimensions[], npy_intp const strides[],
+                                 NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];  // outer (broadcast) loop length
+    npy_intp n = dimensions[1];  // core dim length
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp y_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp y_n_stride = strides[4];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated vecdot only supports SLEEF backend.");
+        return -1;
+    }
+
+    char *x = data[0];
+    char *y = data[1];
+    char *out = data[2];
+
+    size_t incx = x_n_stride / sizeof(Sleef_quad);
+    size_t incy = y_n_stride / sizeof(Sleef_quad);
+
+    for (npy_intp i = 0; i < N; i++) {
+        Sleef_quad *x_ptr = (Sleef_quad *)x;
+        Sleef_quad *y_ptr = (Sleef_quad *)y;
+        Sleef_quad *out_ptr = (Sleef_quad *)out;
+
+        if (n == 0) {
+            *out_ptr = Sleef_cast_from_doubleq1(0.0);
+        }
+        else {
+            int result = qblas_dot(n, x_ptr, incx, y_ptr, incy, out_ptr);
+            if (result != 0) {
+                PyErr_SetString(PyExc_RuntimeError, "QBLAS vecdot operation failed");
+                return -1;
+            }
+        }
+
+        x += x_outer_stride;
+        y += y_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+quad_vecdot_strided_loop_unaligned(PyArrayMethod_Context *context, char *const data[],
+                                   npy_intp const dimensions[], npy_intp const strides[],
+                                   NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp n = dimensions[1];
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp y_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp y_n_stride = strides[4];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated vecdot only supports SLEEF backend.");
+        return -1;
+    }
+
+    char *x = data[0];
+    char *y = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+        for (npy_intp k = 0; k < n; k++) {
+            Sleef_quad a_val, b_val;
+            memcpy(&a_val, x + k * x_n_stride, sizeof(Sleef_quad));
+            memcpy(&b_val, y + k * y_n_stride, sizeof(Sleef_quad));
+            sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+        }
+        memcpy(out, &sum, sizeof(Sleef_quad));
+
+        x += x_outer_stride;
+        y += y_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+naive_vecdot_strided_loop(PyArrayMethod_Context *context, char *const data[],
+                          npy_intp const dimensions[], npy_intp const strides[],
+                          NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp n = dimensions[1];
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp y_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp y_n_stride = strides[4];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    QuadBackendType backend = descr->backend;
+
+    char *x = data[0];
+    char *y = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        if (backend == BACKEND_SLEEF) {
+            Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+            for (npy_intp k = 0; k < n; k++) {
+                Sleef_quad a_val, b_val;
+                memcpy(&a_val, x + k * x_n_stride, sizeof(Sleef_quad));
+                memcpy(&b_val, y + k * y_n_stride, sizeof(Sleef_quad));
+                sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+            }
+            memcpy(out, &sum, sizeof(Sleef_quad));
+        }
+        else {
+            long double sum = 0.0L;
+            for (npy_intp k = 0; k < n; k++) {
+                long double a_val, b_val;
+                memcpy(&a_val, x + k * x_n_stride, sizeof(long double));
+                memcpy(&b_val, y + k * y_n_stride, sizeof(long double));
+                sum += a_val * b_val;
+            }
+            memcpy(out, &sum, sizeof(long double));
+        }
+
+        x += x_outer_stride;
+        y += y_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
 static int
 naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
                           npy_intp const dimensions[], npy_intp const strides[],
@@ -385,32 +533,26 @@ naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
     return 0;
 }
 
-int
-init_matmul_ops(PyObject *numpy)
+static int
+register_matmul_like_ufunc(PyObject *numpy, const char *ufunc_name, const char *spec_name,
+                           PyArrayMethod_StridedLoop *aligned_loop,
+                           PyArrayMethod_StridedLoop *unaligned_loop)
 {
-    PyObject *ufunc = PyObject_GetAttrString(numpy, "matmul");
+    PyObject *ufunc = PyObject_GetAttrString(numpy, ufunc_name);
     if (ufunc == NULL) {
         return -1;
     }
 
     PyArray_DTypeMeta *dtypes[3] = {&QuadPrecDType, &QuadPrecDType, &QuadPrecDType};
 
-#ifndef DISABLE_QUADBLAS
-
     PyType_Slot slots[] = {
             {NPY_METH_resolve_descriptors, (void *)&quad_matmul_resolve_descriptors},
-            {NPY_METH_strided_loop, (void *)&quad_matmul_strided_loop_aligned},
-            {NPY_METH_unaligned_strided_loop, (void *)&quad_matmul_strided_loop_unaligned},
+            {NPY_METH_strided_loop, (void *)aligned_loop},
+            {NPY_METH_unaligned_strided_loop, (void *)unaligned_loop},
             {0, NULL}};
-#else
-    PyType_Slot slots[] = {{NPY_METH_resolve_descriptors, (void *)&quad_matmul_resolve_descriptors},
-                           {NPY_METH_strided_loop, (void *)&naive_matmul_strided_loop},
-                           {NPY_METH_unaligned_strided_loop, (void *)&naive_matmul_strided_loop},
-                           {0, NULL}};
-#endif  // DISABLE_QUADBLAS
 
     PyArrayMethod_Spec Spec = {
-            .name = "quad_matmul_qblas",
+            .name = spec_name,
             .nin = 2,
             .nout = 1,
             .casting = NPY_NO_CASTING,
@@ -459,6 +601,36 @@ init_matmul_ops(PyObject *numpy)
 
     Py_DECREF(promoter_capsule);
     Py_DECREF(ufunc);
+
+    return 0;
+}
+
+int
+init_matmul_ops(PyObject *numpy)
+{
+#ifndef DISABLE_QUADBLAS
+    if (register_matmul_like_ufunc(numpy, "matmul", "quad_matmul_qblas",
+                                   &quad_matmul_strided_loop_aligned,
+                                   &quad_matmul_strided_loop_unaligned) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "vecdot", "quad_vecdot_qblas",
+                                   &quad_vecdot_strided_loop_aligned,
+                                   &quad_vecdot_strided_loop_unaligned) < 0) {
+        return -1;
+    }
+#else
+    if (register_matmul_like_ufunc(numpy, "matmul", "quad_matmul_naive",
+                                   &naive_matmul_strided_loop,
+                                   &naive_matmul_strided_loop) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "vecdot", "quad_vecdot_naive",
+                                   &naive_vecdot_strided_loop,
+                                   &naive_vecdot_strided_loop) < 0) {
+        return -1;
+    }
+#endif  // DISABLE_QUADBLAS
 
     return 0;
 }

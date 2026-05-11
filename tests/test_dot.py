@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from utils import create_quad_array, assert_quad_equal, assert_quad_array_equal, arrays_equal_with_nan
+from utils import create_quad_array, assert_quad_equal, assert_quad_array_equal, arrays_equal_with_nan, _q, _qarr
 from numpy_quaddtype import QuadPrecision, QuadPrecDType
 
 
@@ -690,3 +690,107 @@ class TestBasicErrorHandling:
         
         with pytest.raises(ValueError, match=r"matmul: Input operand 1 has a mismatch in its core dimension 0"):
             np.matmul(A, B)
+
+
+class TestVecdot:
+    """Tests for np.vecdot on QuadPrecision arrays."""
+
+    def test_simple(self):
+        x = create_quad_array([1, 2, 3])
+        y = create_quad_array([4, 5, 6])
+        result = np.vecdot(x, y)
+        assert isinstance(result, QuadPrecision)
+        assert_quad_equal(result, 32.0)
+
+    def test_orthogonal(self):
+        x = create_quad_array([1, 0, 0])
+        y = create_quad_array([0, 1, 0])
+        assert_quad_equal(np.vecdot(x, y), 0.0)
+
+    def test_self_dot(self):
+        x = create_quad_array([2, 3, 4])
+        assert_quad_equal(np.vecdot(x, x), 29.0)
+
+    @pytest.mark.parametrize("size", [1, 2, 5, 10, 50, 100])
+    def test_various_sizes(self, size):
+        x_vals = [i + 1 for i in range(size)]
+        y_vals = [2 * (i + 1) for i in range(size)]
+        x = create_quad_array(x_vals)
+        y = create_quad_array(y_vals)
+        result = np.vecdot(x, y)
+        expected = sum(x_vals[i] * y_vals[i] for i in range(size))
+        assert_quad_equal(result, expected)
+
+    def test_negative_and_fractional(self):
+        x = create_quad_array([1.5, -2.5, 3.25])
+        y = create_quad_array([-1.25, 2.75, -3.5])
+        expected = 1.5 * -1.25 + -2.5 * 2.75 + 3.25 * -3.5
+        assert_quad_equal(np.vecdot(x, y), expected)
+
+    def test_single_element(self):
+        x = create_quad_array([7.0])
+        y = create_quad_array([6.0])
+        result = np.vecdot(x, y)
+        assert isinstance(result, QuadPrecision)
+        assert_quad_equal(result, 42.0)
+
+    def test_batched_vectors(self):
+        """vecdot broadcasts over leading dimensions."""
+        x = _qarr([[1, 2, 3], [4, 5, 6]])
+        y = _qarr([[1, 1, 1], [2, 2, 2]])
+        result = np.vecdot(x, y)
+        assert result.shape == (2,)
+        assert_quad_equal(result[0], 6.0)
+        assert_quad_equal(result[1], 30.0)
+
+    def test_batched_3d(self):
+        x = _qarr([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        y = _qarr([[[1, 1], [1, 1]], [[2, 2], [2, 2]]])
+        result = np.vecdot(x, y)
+        assert result.shape == (2, 2)
+        expected = [[3, 7], [22, 30]]
+        for i in range(2):
+            for j in range(2):
+                assert_quad_equal(result[i, j], expected[i][j])
+
+    def test_broadcast_against_scalar_vector(self):
+        """Broadcast a single vector against a stack."""
+        x = _qarr([[1, 2, 3], [4, 5, 6]])
+        y = _qarr([1, 1, 1])
+        result = np.vecdot(x, y)
+        assert result.shape == (2,)
+        assert_quad_equal(result[0], 6.0)
+        assert_quad_equal(result[1], 15.0)
+
+    @pytest.mark.parametrize("special_val", ["0.0", "-0.0", "inf", "-inf", "nan"])
+    def test_special_values(self, special_val):
+        x = create_quad_array([1.0, float(special_val), 2.0])
+        y = create_quad_array([3.0, 4.0, 5.0])
+        result = np.vecdot(x, y)
+        expected = np.vecdot(np.array([1.0, float(special_val), 2.0], dtype=np.float64),
+                             np.array([3.0, 4.0, 5.0], dtype=np.float64))
+        if np.isnan(expected):
+            assert np.isnan(float(result))
+        elif np.isinf(expected):
+            assert np.isinf(float(result))
+            assert np.sign(float(result)) == np.sign(expected)
+        else:
+            assert_quad_equal(result, expected)
+
+    def test_matches_matmul_for_1d(self):
+        """np.matmul of two 1D arrays is equivalent to vecdot."""
+        x = create_quad_array([1.5, 2.5, -3.0, 0.25])
+        y = create_quad_array([4.0, -1.0, 2.0, 8.0])
+        assert_quad_equal(np.vecdot(x, y), np.matmul(x, y))
+
+    def test_precision_advantage(self):
+        """vecdot accumulates with quad precision, beating float64 cancellation."""
+        x = create_quad_array([1e20, 1.0, -1e20])
+        y = create_quad_array([0.0, 1.0, 0.0])
+        assert_quad_equal(np.vecdot(x, y), 1.0, atol=1e-25)
+
+    def test_dimension_mismatch(self):
+        x = create_quad_array([1, 2])
+        y = create_quad_array([1, 2, 3])
+        with pytest.raises(ValueError):
+            np.vecdot(x, y)
