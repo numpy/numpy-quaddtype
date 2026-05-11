@@ -687,6 +687,600 @@ class TestBasicErrorHandling:
         """Test dimension mismatch in matrix-matrix"""
         A = create_quad_array([1, 2, 3, 4], shape=(2, 2))
         B = create_quad_array([1, 2, 3, 4, 5, 6], shape=(3, 2))  # Wrong size
-        
+
         with pytest.raises(ValueError, match=r"matmul: Input operand 1 has a mismatch in its core dimension 0"):
             np.matmul(A, B)
+
+
+# ================================================================================
+# vecdot / matvec / vecmat helpers
+# ================================================================================
+
+def _q(v):
+    return QuadPrecision(str(float(v)), backend='sleef')
+
+
+def _qarr(values, shape=None):
+    """Build an n-D QuadPrecision array from a (possibly nested) Python sequence."""
+    dt = QuadPrecDType(backend='sleef')
+    arr = np.asarray(values, dtype=np.float64)
+    if shape is not None:
+        arr = arr.reshape(shape)
+    flat = [_q(v) for v in arr.ravel().tolist()]
+    return np.array(flat, dtype=dt).reshape(arr.shape)
+
+
+# ================================================================================
+# VECDOT TESTS — signature (n),(n)->()
+# ================================================================================
+
+class TestVecdot:
+    """Tests for np.vecdot on QuadPrecision arrays."""
+
+    def test_simple(self):
+        x = create_quad_array([1, 2, 3])
+        y = create_quad_array([4, 5, 6])
+        result = np.vecdot(x, y)
+        assert isinstance(result, QuadPrecision)
+        assert_quad_equal(result, 32.0)
+
+    def test_orthogonal(self):
+        x = create_quad_array([1, 0, 0])
+        y = create_quad_array([0, 1, 0])
+        assert_quad_equal(np.vecdot(x, y), 0.0)
+
+    def test_self_dot(self):
+        x = create_quad_array([2, 3, 4])
+        assert_quad_equal(np.vecdot(x, x), 29.0)
+
+    @pytest.mark.parametrize("size", [1, 2, 5, 10, 50, 100])
+    def test_various_sizes(self, size):
+        x_vals = [i + 1 for i in range(size)]
+        y_vals = [2 * (i + 1) for i in range(size)]
+        x = create_quad_array(x_vals)
+        y = create_quad_array(y_vals)
+        result = np.vecdot(x, y)
+        expected = sum(x_vals[i] * y_vals[i] for i in range(size))
+        assert_quad_equal(result, expected)
+
+    def test_negative_and_fractional(self):
+        x = create_quad_array([1.5, -2.5, 3.25])
+        y = create_quad_array([-1.25, 2.75, -3.5])
+        expected = 1.5 * -1.25 + -2.5 * 2.75 + 3.25 * -3.5
+        assert_quad_equal(np.vecdot(x, y), expected)
+
+    def test_single_element(self):
+        x = create_quad_array([7.0])
+        y = create_quad_array([6.0])
+        result = np.vecdot(x, y)
+        assert isinstance(result, QuadPrecision)
+        assert_quad_equal(result, 42.0)
+
+    def test_batched_vectors(self):
+        """vecdot broadcasts over leading dimensions."""
+        x = _qarr([[1, 2, 3], [4, 5, 6]])
+        y = _qarr([[1, 1, 1], [2, 2, 2]])
+        result = np.vecdot(x, y)
+        assert result.shape == (2,)
+        assert_quad_equal(result[0], 6.0)
+        assert_quad_equal(result[1], 30.0)
+
+    def test_batched_3d(self):
+        x = _qarr([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        y = _qarr([[[1, 1], [1, 1]], [[2, 2], [2, 2]]])
+        result = np.vecdot(x, y)
+        assert result.shape == (2, 2)
+        expected = [[3, 7], [22, 30]]
+        for i in range(2):
+            for j in range(2):
+                assert_quad_equal(result[i, j], expected[i][j])
+
+    def test_broadcast_against_scalar_vector(self):
+        """Broadcast a single vector against a stack."""
+        x = _qarr([[1, 2, 3], [4, 5, 6]])
+        y = _qarr([1, 1, 1])
+        result = np.vecdot(x, y)
+        assert result.shape == (2,)
+        assert_quad_equal(result[0], 6.0)
+        assert_quad_equal(result[1], 15.0)
+
+    @pytest.mark.parametrize("special_val", ["0.0", "-0.0", "inf", "-inf", "nan"])
+    def test_special_values(self, special_val):
+        x = create_quad_array([1.0, float(special_val), 2.0])
+        y = create_quad_array([3.0, 4.0, 5.0])
+        result = np.vecdot(x, y)
+        expected = np.vecdot(np.array([1.0, float(special_val), 2.0], dtype=np.float64),
+                             np.array([3.0, 4.0, 5.0], dtype=np.float64))
+        if np.isnan(expected):
+            assert np.isnan(float(result))
+        elif np.isinf(expected):
+            assert np.isinf(float(result))
+            assert np.sign(float(result)) == np.sign(expected)
+        else:
+            assert_quad_equal(result, expected)
+
+    def test_matches_matmul_for_1d(self):
+        """np.matmul of two 1D arrays is equivalent to vecdot."""
+        x = create_quad_array([1.5, 2.5, -3.0, 0.25])
+        y = create_quad_array([4.0, -1.0, 2.0, 8.0])
+        assert_quad_equal(np.vecdot(x, y), np.matmul(x, y))
+
+    def test_precision_advantage(self):
+        """vecdot accumulates with quad precision, beating float64 cancellation."""
+        x = create_quad_array([1e20, 1.0, -1e20])
+        y = create_quad_array([0.0, 1.0, 0.0])
+        assert_quad_equal(np.vecdot(x, y), 1.0, atol=1e-25)
+
+    def test_dimension_mismatch(self):
+        x = create_quad_array([1, 2])
+        y = create_quad_array([1, 2, 3])
+        with pytest.raises(ValueError):
+            np.vecdot(x, y)
+
+
+# ================================================================================
+# MATVEC TESTS — signature (m,n),(n)->(m)
+# ================================================================================
+
+class TestMatvec:
+    """Tests for np.matvec on QuadPrecision arrays."""
+
+    def test_simple(self):
+        A = create_quad_array([1, 2, 3, 4, 5, 6], shape=(2, 3))
+        x = create_quad_array([1, 1, 1])
+        result = np.matvec(A, x)
+        assert result.shape == (2,)
+        assert_quad_equal(result[0], 6.0)
+        assert_quad_equal(result[1], 15.0)
+
+    def test_identity(self):
+        I = create_quad_array([1, 0, 0, 0, 1, 0, 0, 0, 1], shape=(3, 3))
+        x = create_quad_array([2, 3, 4])
+        result = np.matvec(I, x)
+        assert result.shape == (3,)
+        for i in range(3):
+            assert_quad_equal(result[i], float(x[i]))
+
+    @pytest.mark.parametrize("m,n", [(2, 3), (3, 2), (5, 4), (10, 8), (20, 15)])
+    def test_various_sizes(self, m, n):
+        A_vals = [(i * n + j + 1) for i in range(m) for j in range(n)]
+        A = create_quad_array(A_vals, shape=(m, n))
+        x_vals = [i + 1 for i in range(n)]
+        x = create_quad_array(x_vals)
+        result = np.matvec(A, x)
+        assert result.shape == (m,)
+        if m <= 5 and n <= 5:
+            for i in range(m):
+                expected = sum(A_vals[i * n + j] * x_vals[j] for j in range(n))
+                assert_quad_equal(result[i], expected)
+
+    def test_single_element(self):
+        A = create_quad_array([5.0], shape=(1, 1))
+        x = create_quad_array([3.0])
+        result = np.matvec(A, x)
+        assert result.shape == (1,)
+        assert_quad_equal(result[0], 15.0)
+
+    def test_batched(self):
+        """matvec broadcasts over leading dims of A and x."""
+        A = _qarr([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        x = _qarr([[1, 1], [2, 2]])
+        result = np.matvec(A, x)
+        assert result.shape == (2, 2)
+        expected = [[3, 7], [22, 30]]
+        for i in range(2):
+            for j in range(2):
+                assert_quad_equal(result[i, j], expected[i][j])
+
+    def test_broadcast_single_x(self):
+        A = _qarr([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        x = _qarr([1, 1])
+        result = np.matvec(A, x)
+        assert result.shape == (2, 2)
+        expected = [[3, 7], [11, 15]]
+        for i in range(2):
+            for j in range(2):
+                assert_quad_equal(result[i, j], expected[i][j])
+
+    def test_matches_matmul_2d(self):
+        """matvec(A, x) == matmul(A, x) when A is 2D and x is 1D."""
+        A = create_quad_array([1, 2, 3, 4, 5, 6], shape=(2, 3))
+        x = create_quad_array([1, 2, 3])
+        assert_quad_array_equal(np.matvec(A, x), np.matmul(A, x))
+
+    def test_against_float64_reference(self):
+        """Cross-validate matvec result against float64 numpy."""
+        A_vals = [(i * 3 + j + 1) * 0.25 for i in range(4) for j in range(3)]
+        x_vals = [v * 0.5 for v in [1.0, 2.0, 3.0]]
+        A = create_quad_array(A_vals, shape=(4, 3))
+        x = create_quad_array(x_vals)
+        result = np.matvec(A, x)
+        ref = np.matvec(np.array(A_vals, dtype=np.float64).reshape(4, 3),
+                        np.array(x_vals, dtype=np.float64))
+        for i in range(4):
+            assert_quad_equal(result[i], ref[i], rtol=1e-14)
+
+    @pytest.mark.parametrize("special_val", ["0.0", "-0.0", "inf", "-inf", "nan"])
+    def test_special_values(self, special_val):
+        A = create_quad_array([1.0, float(special_val), 3.0, 4.0], shape=(2, 2))
+        x = create_quad_array([2.0, 1.0])
+        result = np.matvec(A, x)
+        ref = np.matvec(np.array([[1.0, float(special_val)], [3.0, 4.0]], dtype=np.float64),
+                        np.array([2.0, 1.0], dtype=np.float64))
+        assert result.shape == ref.shape
+        for i in range(len(ref)):
+            if np.isnan(ref[i]):
+                assert np.isnan(float(result[i]))
+            elif np.isinf(ref[i]):
+                assert np.isinf(float(result[i]))
+                assert np.sign(float(result[i])) == np.sign(ref[i])
+            else:
+                assert_quad_equal(result[i], ref[i])
+
+    def test_precision_advantage(self):
+        """matvec preserves quad-precision accumulation."""
+        A = _qarr([[1e20, 1.0, -1e20]])
+        x = _qarr([0.0, 1.0, 0.0])
+        result = np.matvec(A, x)
+        assert_quad_equal(result[0], 1.0, atol=1e-25)
+
+    def test_dimension_mismatch(self):
+        A = create_quad_array([1, 2, 3, 4], shape=(2, 2))
+        x = create_quad_array([1, 2, 3])
+        with pytest.raises(ValueError):
+            np.matvec(A, x)
+
+    def test_non_contiguous_matrix(self):
+        """matvec on a column-slice (non-C-contiguous) of a larger matrix."""
+        full = _qarr([[1, 2, 3, 4],
+                      [5, 6, 7, 8],
+                      [9, 10, 11, 12]])
+        A = full[:, ::2]  # cols 0 and 2 -> shape (3, 2)
+        x = create_quad_array([1, 1])
+        result = np.matvec(A, x)
+        # Rows: [1+3, 5+7, 9+11] = [4, 12, 20]
+        assert result.shape == (3,)
+        assert_quad_equal(result[0], 4.0)
+        assert_quad_equal(result[1], 12.0)
+        assert_quad_equal(result[2], 20.0)
+
+    def test_transposed_view(self):
+        """matvec on A.T uses col-major dispatch under the hood."""
+        A = _qarr([[1, 2, 3], [4, 5, 6]])
+        x = create_quad_array([1, 1])
+        # A is (2,3); A.T is (3,2). matvec(A.T, x) where x is length 2.
+        result = np.matvec(A.T, x)
+        # Expected: A.T @ x = [1+4, 2+5, 3+6] = [5, 7, 9]
+        assert result.shape == (3,)
+        assert_quad_equal(result[0], 5.0)
+        assert_quad_equal(result[1], 7.0)
+        assert_quad_equal(result[2], 9.0)
+
+
+# ================================================================================
+# VECMAT TESTS — signature (n),(n,m)->(m)
+# ================================================================================
+
+class TestVecmat:
+    """Tests for np.vecmat on QuadPrecision arrays."""
+
+    def test_simple(self):
+        x = create_quad_array([1, 2])
+        B = create_quad_array([1, 2, 3, 4, 5, 6], shape=(2, 3))
+        result = np.vecmat(x, B)
+        # x @ B = [1*1+2*4, 1*2+2*5, 1*3+2*6] = [9, 12, 15]
+        assert result.shape == (3,)
+        assert_quad_equal(result[0], 9.0)
+        assert_quad_equal(result[1], 12.0)
+        assert_quad_equal(result[2], 15.0)
+
+    def test_identity(self):
+        x = create_quad_array([2, 3, 4])
+        I = create_quad_array([1, 0, 0, 0, 1, 0, 0, 0, 1], shape=(3, 3))
+        result = np.vecmat(x, I)
+        assert result.shape == (3,)
+        for i in range(3):
+            assert_quad_equal(result[i], float(x[i]))
+
+    @pytest.mark.parametrize("n,m", [(2, 3), (3, 2), (5, 4), (8, 10), (15, 20)])
+    def test_various_sizes(self, n, m):
+        x_vals = [i + 1 for i in range(n)]
+        B_vals = [(i * m + j + 1) for i in range(n) for j in range(m)]
+        x = create_quad_array(x_vals)
+        B = create_quad_array(B_vals, shape=(n, m))
+        result = np.vecmat(x, B)
+        assert result.shape == (m,)
+        if n <= 5 and m <= 5:
+            for j in range(m):
+                expected = sum(x_vals[i] * B_vals[i * m + j] for i in range(n))
+                assert_quad_equal(result[j], expected)
+
+    def test_single_element(self):
+        x = create_quad_array([3.0])
+        B = create_quad_array([5.0], shape=(1, 1))
+        result = np.vecmat(x, B)
+        assert result.shape == (1,)
+        assert_quad_equal(result[0], 15.0)
+
+    def test_batched(self):
+        x = _qarr([[1, 2], [3, 4]])
+        B = _qarr([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        result = np.vecmat(x, B)
+        assert result.shape == (2, 2)
+        # batch 0: [1,2] @ [[1,2],[3,4]] = [7, 10]
+        # batch 1: [3,4] @ [[5,6],[7,8]] = [43, 50]
+        expected = [[7, 10], [43, 50]]
+        for i in range(2):
+            for j in range(2):
+                assert_quad_equal(result[i, j], expected[i][j])
+
+    def test_broadcast_single_matrix(self):
+        x = _qarr([[1, 2], [3, 4]])
+        B = _qarr([[1, 0], [0, 1]])
+        result = np.vecmat(x, B)
+        # B is identity, so result equals x
+        assert result.shape == (2, 2)
+        for i in range(2):
+            for j in range(2):
+                assert_quad_equal(result[i, j], [[1, 2], [3, 4]][i][j])
+
+    def test_matches_matmul_2d(self):
+        """vecmat(x, B) == matmul(x, B) when x is 1D and B is 2D."""
+        x = create_quad_array([1, 2, 3])
+        B = create_quad_array([1, 2, 3, 4, 5, 6], shape=(3, 2))
+        assert_quad_array_equal(np.vecmat(x, B), np.matmul(x, B))
+
+    def test_against_float64_reference(self):
+        x_vals = [v * 0.25 for v in [1.0, 2.0, 3.0]]
+        B_vals = [(i * 4 + j + 1) * 0.125 for i in range(3) for j in range(4)]
+        x = create_quad_array(x_vals)
+        B = create_quad_array(B_vals, shape=(3, 4))
+        result = np.vecmat(x, B)
+        ref = np.vecmat(np.array(x_vals, dtype=np.float64),
+                        np.array(B_vals, dtype=np.float64).reshape(3, 4))
+        for j in range(4):
+            assert_quad_equal(result[j], ref[j], rtol=1e-14)
+
+    @pytest.mark.parametrize("special_val", ["0.0", "-0.0", "inf", "-inf", "nan"])
+    def test_special_values(self, special_val):
+        x = create_quad_array([2.0, 1.0])
+        B = create_quad_array([1.0, float(special_val), 3.0, 4.0], shape=(2, 2))
+        result = np.vecmat(x, B)
+        ref = np.vecmat(np.array([2.0, 1.0], dtype=np.float64),
+                        np.array([[1.0, float(special_val)], [3.0, 4.0]], dtype=np.float64))
+        assert result.shape == ref.shape
+        for j in range(len(ref)):
+            if np.isnan(ref[j]):
+                assert np.isnan(float(result[j]))
+            elif np.isinf(ref[j]):
+                assert np.isinf(float(result[j]))
+                assert np.sign(float(result[j])) == np.sign(ref[j])
+            else:
+                assert_quad_equal(result[j], ref[j])
+
+    def test_precision_advantage(self):
+        x = _qarr([1e20, 1.0, -1e20])
+        B = _qarr([[0], [1], [0]])
+        result = np.vecmat(x, B)
+        assert result.shape == (1,)
+        assert_quad_equal(result[0], 1.0, atol=1e-25)
+
+    def test_dimension_mismatch(self):
+        x = create_quad_array([1, 2])
+        B = create_quad_array([1, 2, 3, 4, 5, 6], shape=(3, 2))
+        with pytest.raises(ValueError):
+            np.vecmat(x, B)
+
+    def test_non_contiguous_matrix(self):
+        full = _qarr([[1, 2, 3, 4],
+                      [5, 6, 7, 8]])
+        B = full[:, ::2]  # shape (2, 2), strided columns
+        x = create_quad_array([1, 1])
+        result = np.vecmat(x, B)
+        # B = [[1, 3], [5, 7]] → x @ B = [6, 10]
+        assert result.shape == (2,)
+        assert_quad_equal(result[0], 6.0)
+        assert_quad_equal(result[1], 10.0)
+
+    def test_transposed_view(self):
+        B = _qarr([[1, 2], [3, 4], [5, 6]])
+        # B.T is (2,3); use a length-2 vector:
+        x2 = create_quad_array([1, 1])
+        result = np.vecmat(x2, B.T)
+        # B.T = [[1,3,5],[2,4,6]]; x2 @ B.T = [3, 7, 11]
+        assert result.shape == (3,)
+        assert_quad_equal(result[0], 3.0)
+        assert_quad_equal(result[1], 7.0)
+        assert_quad_equal(result[2], 11.0)
+
+
+# ================================================================================
+# CROSS-CONSISTENCY: vecdot/matvec/vecmat agree with matmul
+# ================================================================================
+
+class TestDotVariantConsistency:
+    """Verify vecdot/matvec/vecmat agree with matmul on overlapping cases."""
+
+    def test_vecdot_equals_matmul_dot(self):
+        for vals_a, vals_b in [
+            ([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]),
+            ([1.5, -2.5, 0.0, 7.0], [2.0, 2.0, 2.0, 2.0]),
+            ([0.0], [0.0]),
+        ]:
+            x = create_quad_array(vals_a)
+            y = create_quad_array(vals_b)
+            assert_quad_equal(np.vecdot(x, y), np.matmul(x, y))
+
+    def test_matvec_equals_matmul(self):
+        A = create_quad_array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], shape=(3, 4))
+        x = create_quad_array([1, -1, 2, 0.5])
+        assert_quad_array_equal(np.matvec(A, x), np.matmul(A, x))
+
+    def test_vecmat_equals_matmul(self):
+        x = create_quad_array([1, -1, 2, 0.5])
+        B = create_quad_array(
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], shape=(4, 3))
+        assert_quad_array_equal(np.vecmat(x, B), np.matmul(x, B))
+
+
+# ================================================================================
+# FLOAT32 SEMANTIC PARITY
+# ================================================================================
+# Verify the QuadPrecision ufuncs behave identically to NumPy's float32
+# implementation under the same call patterns, modulo precision.
+
+class TestDotVariantsFloat32Parity:
+
+    def _qarr_like(self, arr):
+        a = np.asarray(arr, dtype=np.float64)
+        flat = [_q(v) for v in a.ravel().tolist()]
+        return np.array(flat, dtype=QuadPrecDType(backend='sleef')).reshape(a.shape)
+
+    def _check_float_equal(self, got, ref):
+        if got.shape == ():
+            assert float(got) == float(ref)
+        else:
+            got_flat = got.ravel()
+            ref_flat = np.asarray(ref).ravel()
+            assert len(got_flat) == len(ref_flat)
+            for i in range(len(ref_flat)):
+                assert float(got_flat[i]) == ref_flat[i], \
+                    f"index {i}: {float(got_flat[i])} != {ref_flat[i]}"
+
+    def test_vecdot_reversed_view(self):
+        """Negative strides on inputs (NumPy buffers these for us)."""
+        x32 = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+        y32 = np.array([10.0, 20.0, 30.0, 40.0], dtype=np.float32)
+        ref = np.vecdot(x32[::-1], y32)
+        xq = self._qarr_like(x32)
+        yq = self._qarr_like(y32)
+        got = np.vecdot(xq[::-1], yq)
+        assert float(got) == ref
+
+    def test_matvec_reversed_columns(self):
+        A32 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+        x32 = np.array([10.0, 20.0, 30.0], dtype=np.float32)
+        ref = np.matvec(A32[:, ::-1], x32)
+        Aq = self._qarr_like(A32)
+        xq = self._qarr_like(x32)
+        got = np.matvec(Aq[:, ::-1], xq)
+        self._check_float_equal(got, ref)
+
+    def test_vecdot_broadcast_scalar_input(self):
+        """Zero-stride core dim (np.broadcast_to)."""
+        x32 = np.broadcast_to(np.float32(5.0), (4,))
+        y32 = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+        ref = np.vecdot(x32, y32)
+        xq = np.broadcast_to(_q(5.0), (4,))
+        yq = self._qarr_like(y32)
+        got = np.vecdot(xq, yq)
+        assert float(got) == ref
+
+    def test_vecdot_empty(self):
+        x32 = np.zeros((0,), dtype=np.float32)
+        y32 = np.zeros((0,), dtype=np.float32)
+        ref = np.vecdot(x32, y32)
+        xq = np.zeros((0,), dtype=QuadPrecDType(backend='sleef'))
+        yq = np.zeros((0,), dtype=QuadPrecDType(backend='sleef'))
+        got = np.vecdot(xq, yq)
+        assert float(got) == ref
+
+    def test_matvec_empty_n(self):
+        A32 = np.zeros((3, 0), dtype=np.float32)
+        x32 = np.zeros((0,), dtype=np.float32)
+        ref = np.matvec(A32, x32)
+        dt = QuadPrecDType(backend='sleef')
+        Aq = np.zeros((3, 0), dtype=dt)
+        xq = np.zeros((0,), dtype=dt)
+        got = np.matvec(Aq, xq)
+        assert got.shape == ref.shape
+        self._check_float_equal(got, ref)
+
+    def test_matvec_fortran_order(self):
+        """Column-major (F-contiguous) matrix should still work."""
+        A32 = np.asfortranarray(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                                         dtype=np.float32))
+        x32 = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        ref = np.matvec(A32, x32)
+        Aq_F = np.asfortranarray(self._qarr_like(A32))
+        assert Aq_F.flags.f_contiguous and not Aq_F.flags.c_contiguous
+        xq = self._qarr_like(x32)
+        got = np.matvec(Aq_F, xq)
+        self._check_float_equal(got, ref)
+
+    def test_vecmat_fortran_order(self):
+        B32 = np.asfortranarray(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                                         dtype=np.float32))
+        x32 = np.array([1.0, 1.0], dtype=np.float32)
+        ref = np.vecmat(x32, B32)
+        Bq_F = np.asfortranarray(self._qarr_like(B32))
+        xq = self._qarr_like(x32)
+        got = np.vecmat(xq, Bq_F)
+        self._check_float_equal(got, ref)
+
+    def test_vecdot_axis_parameter(self):
+        """The `axis=` parameter operates on the chosen axis just like float32."""
+        x32 = np.arange(12, dtype=np.float32).reshape(3, 4)
+        y32 = np.arange(12, dtype=np.float32).reshape(3, 4) + 1
+        ref = np.vecdot(x32, y32, axis=0)
+        xq = self._qarr_like(x32)
+        yq = self._qarr_like(y32)
+        got = np.vecdot(xq, yq, axis=0)
+        self._check_float_equal(got, ref)
+
+    def test_vecdot_with_out_kwarg(self):
+        x32 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        y32 = np.array([4.0, 5.0, 6.0], dtype=np.float32)
+        out32 = np.zeros((), dtype=np.float32)
+        np.vecdot(x32, y32, out=out32)
+
+        dt = QuadPrecDType(backend='sleef')
+        xq = self._qarr_like(x32)
+        yq = self._qarr_like(y32)
+        outq = np.zeros((), dtype=dt)
+        np.vecdot(xq, yq, out=outq)
+        assert float(outq) == float(out32)
+
+    def test_matvec_higher_dim_broadcasting(self):
+        """Mixed broadcasting across leading dims, e.g. (3,1,M,N) @ (1,2,N)."""
+        A32 = np.arange(60, dtype=np.float32).reshape(3, 1, 4, 5)
+        x32 = np.arange(10, dtype=np.float32).reshape(1, 2, 5)
+        ref = np.matvec(A32, x32)
+        Aq = self._qarr_like(A32)
+        xq = self._qarr_like(x32)
+        got = np.matvec(Aq, xq)
+        assert got.shape == ref.shape
+        self._check_float_equal(got, ref)
+
+    def test_matvec_axes_parameter(self):
+        """Custom `axes=` parameter for selecting which dims are the core dims."""
+        A32 = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+        x32 = np.arange(8, dtype=np.float32).reshape(2, 4)
+        ref = np.matvec(A32, x32, axes=[(-2, -1), -1, -1])
+        Aq = self._qarr_like(A32)
+        xq = self._qarr_like(x32)
+        got = np.matvec(Aq, xq, axes=[(-2, -1), -1, -1])
+        assert got.shape == ref.shape
+        self._check_float_equal(got, ref)
+
+    def test_vecdot_no_conjugation_for_real(self):
+        """For real types, vecdot(x, y) == matmul(x, y) — no conjugation effect."""
+        x32 = np.array([1.5, -2.5, 3.5], dtype=np.float32)
+        y32 = np.array([-1.0, 4.0, 2.0], dtype=np.float32)
+        ref = np.vecdot(x32, y32)
+        assert ref == np.matmul(x32, y32)
+
+        xq = self._qarr_like(x32)
+        yq = self._qarr_like(y32)
+        got = np.vecdot(xq, yq)
+        assert float(got) == ref
+        assert float(got) == float(np.matmul(xq, yq))
+
+    def test_output_dtype(self):
+        """Output dtype is QuadPrecDType (preserves the input dtype)."""
+        dt = QuadPrecDType(backend='sleef')
+        xq = self._qarr_like([1, 2, 3])
+        yq = self._qarr_like([4, 5, 6])
+        assert isinstance(np.vecdot(xq, yq), QuadPrecision)
+        assert np.matvec(self._qarr_like([[1, 2], [3, 4]]), self._qarr_like([1, 1])).dtype == dt
+        assert np.vecmat(self._qarr_like([1, 2]), self._qarr_like([[1, 2], [3, 4]])).dtype == dt

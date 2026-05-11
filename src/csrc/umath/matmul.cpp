@@ -315,6 +315,574 @@ quad_matmul_strided_loop_unaligned(PyArrayMethod_Context *context, char *const d
     return 0;
 }
 
+
+// vecdot: signature (n),(n)->()
+
+static int
+quad_vecdot_strided_loop_aligned(PyArrayMethod_Context *context, char *const data[],
+                                 npy_intp const dimensions[], npy_intp const strides[],
+                                 NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];  // outer (broadcast) loop length
+    npy_intp n = dimensions[1];  // core dim length
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp y_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp y_n_stride = strides[4];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated vecdot only supports SLEEF backend.");
+        return -1;
+    }
+
+    char *x = data[0];
+    char *y = data[1];
+    char *out = data[2];
+
+    size_t incx = x_n_stride / sizeof(Sleef_quad);
+    size_t incy = y_n_stride / sizeof(Sleef_quad);
+
+    for (npy_intp i = 0; i < N; i++) {
+        Sleef_quad *x_ptr = (Sleef_quad *)x;
+        Sleef_quad *y_ptr = (Sleef_quad *)y;
+        Sleef_quad *out_ptr = (Sleef_quad *)out;
+
+        if (n == 0) {
+            *out_ptr = Sleef_cast_from_doubleq1(0.0);
+        }
+        else {
+            int result = qblas_dot(n, x_ptr, incx, y_ptr, incy, out_ptr);
+            if (result != 0) {
+                PyErr_SetString(PyExc_RuntimeError, "QBLAS vecdot operation failed");
+                return -1;
+            }
+        }
+
+        x += x_outer_stride;
+        y += y_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+quad_vecdot_strided_loop_unaligned(PyArrayMethod_Context *context, char *const data[],
+                                   npy_intp const dimensions[], npy_intp const strides[],
+                                   NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp n = dimensions[1];
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp y_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp y_n_stride = strides[4];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated vecdot only supports SLEEF backend.");
+        return -1;
+    }
+
+    char *x = data[0];
+    char *y = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+        for (npy_intp k = 0; k < n; k++) {
+            Sleef_quad a_val, b_val;
+            memcpy(&a_val, x + k * x_n_stride, sizeof(Sleef_quad));
+            memcpy(&b_val, y + k * y_n_stride, sizeof(Sleef_quad));
+            sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+        }
+        memcpy(out, &sum, sizeof(Sleef_quad));
+
+        x += x_outer_stride;
+        y += y_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+naive_vecdot_strided_loop(PyArrayMethod_Context *context, char *const data[],
+                          npy_intp const dimensions[], npy_intp const strides[],
+                          NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp n = dimensions[1];
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp y_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp y_n_stride = strides[4];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    QuadBackendType backend = descr->backend;
+
+    char *x = data[0];
+    char *y = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        if (backend == BACKEND_SLEEF) {
+            Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+            for (npy_intp k = 0; k < n; k++) {
+                Sleef_quad a_val, b_val;
+                memcpy(&a_val, x + k * x_n_stride, sizeof(Sleef_quad));
+                memcpy(&b_val, y + k * y_n_stride, sizeof(Sleef_quad));
+                sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+            }
+            memcpy(out, &sum, sizeof(Sleef_quad));
+        }
+        else {
+            long double sum = 0.0L;
+            for (npy_intp k = 0; k < n; k++) {
+                long double a_val, b_val;
+                memcpy(&a_val, x + k * x_n_stride, sizeof(long double));
+                memcpy(&b_val, y + k * y_n_stride, sizeof(long double));
+                sum += a_val * b_val;
+            }
+            memcpy(out, &sum, sizeof(long double));
+        }
+
+        x += x_outer_stride;
+        y += y_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+
+// matvec: signature (m,n),(n)->(m)
+
+static int
+quad_matvec_strided_loop_aligned(PyArrayMethod_Context *context, char *const data[],
+                                 npy_intp const dimensions[], npy_intp const strides[],
+                                 NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];  // outer (broadcast) loop length
+    npy_intp m = dimensions[1];  // rows of A / length of output
+    npy_intp n = dimensions[2];  // cols of A / length of x
+
+    npy_intp A_outer_stride = strides[0];
+    npy_intp x_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp A_m_stride = strides[3];
+    npy_intp A_n_stride = strides[4];
+    npy_intp x_n_stride = strides[5];
+    npy_intp out_m_stride = strides[6];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated matvec only supports SLEEF backend.");
+        return -1;
+    }
+
+    Sleef_quad alpha = Sleef_cast_from_doubleq1(1.0);
+    Sleef_quad beta = Sleef_cast_from_doubleq1(0.0);
+
+    char *A = data[0];
+    char *x = data[1];
+    char *out = data[2];
+
+    bool A_is_row_major = (A_n_stride == (npy_intp)sizeof(Sleef_quad));
+    bool A_is_col_major = (A_m_stride == (npy_intp)sizeof(Sleef_quad));
+
+    for (npy_intp i = 0; i < N; i++) {
+        Sleef_quad *A_ptr = (Sleef_quad *)A;
+        Sleef_quad *x_ptr = (Sleef_quad *)x;
+        Sleef_quad *out_ptr = (Sleef_quad *)out;
+
+        if (m == 0 || n == 0) {
+            for (npy_intp r = 0; r < m; r++) {
+                Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+                memcpy(out + r * out_m_stride, &zero, sizeof(Sleef_quad));
+            }
+        }
+        else if (A_is_row_major) {
+            size_t lda = A_m_stride / sizeof(Sleef_quad);
+            size_t incx = x_n_stride / sizeof(Sleef_quad);
+            size_t incy = out_m_stride / sizeof(Sleef_quad);
+
+            for (npy_intp r = 0; r < m; r++) {
+                Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+                memcpy(out + r * out_m_stride, &zero, sizeof(Sleef_quad));
+            }
+
+            int result = qblas_gemv('R', 'N', m, n, &alpha, A_ptr, lda, x_ptr, incx, &beta,
+                                    out_ptr, incy);
+            if (result != 0) {
+                PyErr_SetString(PyExc_RuntimeError, "QBLAS matvec operation failed");
+                return -1;
+            }
+        }
+        else if (A_is_col_major) {
+            size_t lda = A_n_stride / sizeof(Sleef_quad);
+            size_t incx = x_n_stride / sizeof(Sleef_quad);
+            size_t incy = out_m_stride / sizeof(Sleef_quad);
+
+            for (npy_intp r = 0; r < m; r++) {
+                Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+                memcpy(out + r * out_m_stride, &zero, sizeof(Sleef_quad));
+            }
+
+            int result = qblas_gemv('C', 'N', m, n, &alpha, A_ptr, lda, x_ptr, incx, &beta,
+                                    out_ptr, incy);
+            if (result != 0) {
+                PyErr_SetString(PyExc_RuntimeError, "QBLAS matvec operation failed");
+                return -1;
+            }
+        }
+        else {
+            // Fall back to FMA-based loop for arbitrary strides
+            for (npy_intp r = 0; r < m; r++) {
+                Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+                for (npy_intp c = 0; c < n; c++) {
+                    Sleef_quad a_val, b_val;
+                    memcpy(&a_val, A + r * A_m_stride + c * A_n_stride, sizeof(Sleef_quad));
+                    memcpy(&b_val, x + c * x_n_stride, sizeof(Sleef_quad));
+                    sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+                }
+                memcpy(out + r * out_m_stride, &sum, sizeof(Sleef_quad));
+            }
+        }
+
+        A += A_outer_stride;
+        x += x_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+quad_matvec_strided_loop_unaligned(PyArrayMethod_Context *context, char *const data[],
+                                   npy_intp const dimensions[], npy_intp const strides[],
+                                   NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp m = dimensions[1];
+    npy_intp n = dimensions[2];
+
+    npy_intp A_outer_stride = strides[0];
+    npy_intp x_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp A_m_stride = strides[3];
+    npy_intp A_n_stride = strides[4];
+    npy_intp x_n_stride = strides[5];
+    npy_intp out_m_stride = strides[6];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated matvec only supports SLEEF backend.");
+        return -1;
+    }
+
+    char *A = data[0];
+    char *x = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        for (npy_intp r = 0; r < m; r++) {
+            Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+            for (npy_intp c = 0; c < n; c++) {
+                Sleef_quad a_val, b_val;
+                memcpy(&a_val, A + r * A_m_stride + c * A_n_stride, sizeof(Sleef_quad));
+                memcpy(&b_val, x + c * x_n_stride, sizeof(Sleef_quad));
+                sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+            }
+            memcpy(out + r * out_m_stride, &sum, sizeof(Sleef_quad));
+        }
+
+        A += A_outer_stride;
+        x += x_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+naive_matvec_strided_loop(PyArrayMethod_Context *context, char *const data[],
+                          npy_intp const dimensions[], npy_intp const strides[],
+                          NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp m = dimensions[1];
+    npy_intp n = dimensions[2];
+
+    npy_intp A_outer_stride = strides[0];
+    npy_intp x_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp A_m_stride = strides[3];
+    npy_intp A_n_stride = strides[4];
+    npy_intp x_n_stride = strides[5];
+    npy_intp out_m_stride = strides[6];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    QuadBackendType backend = descr->backend;
+
+    char *A = data[0];
+    char *x = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        for (npy_intp r = 0; r < m; r++) {
+            if (backend == BACKEND_SLEEF) {
+                Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+                for (npy_intp c = 0; c < n; c++) {
+                    Sleef_quad a_val, b_val;
+                    memcpy(&a_val, A + r * A_m_stride + c * A_n_stride, sizeof(Sleef_quad));
+                    memcpy(&b_val, x + c * x_n_stride, sizeof(Sleef_quad));
+                    sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+                }
+                memcpy(out + r * out_m_stride, &sum, sizeof(Sleef_quad));
+            }
+            else {
+                long double sum = 0.0L;
+                for (npy_intp c = 0; c < n; c++) {
+                    long double a_val, b_val;
+                    memcpy(&a_val, A + r * A_m_stride + c * A_n_stride, sizeof(long double));
+                    memcpy(&b_val, x + c * x_n_stride, sizeof(long double));
+                    sum += a_val * b_val;
+                }
+                memcpy(out + r * out_m_stride, &sum, sizeof(long double));
+            }
+        }
+
+        A += A_outer_stride;
+        x += x_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+
+// vecmat: signature (n),(n,m)->(m)
+// Computes out[j] = sum_k x[k] * B[k,j] (i.e. out = x @ B = B^T @ x)
+
+static int
+quad_vecmat_strided_loop_aligned(PyArrayMethod_Context *context, char *const data[],
+                                 npy_intp const dimensions[], npy_intp const strides[],
+                                 NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];  // outer (broadcast) loop length
+    npy_intp n = dimensions[1];  // length of x / rows of B
+    npy_intp m = dimensions[2];  // cols of B / length of output
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp B_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp B_n_stride = strides[4];
+    npy_intp B_m_stride = strides[5];
+    npy_intp out_m_stride = strides[6];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated vecmat only supports SLEEF backend.");
+        return -1;
+    }
+
+    Sleef_quad alpha = Sleef_cast_from_doubleq1(1.0);
+    Sleef_quad beta = Sleef_cast_from_doubleq1(0.0);
+
+    char *x = data[0];
+    char *B = data[1];
+    char *out = data[2];
+
+    bool B_is_row_major = (B_m_stride == (npy_intp)sizeof(Sleef_quad));
+    bool B_is_col_major = (B_n_stride == (npy_intp)sizeof(Sleef_quad));
+
+    for (npy_intp i = 0; i < N; i++) {
+        Sleef_quad *x_ptr = (Sleef_quad *)x;
+        Sleef_quad *B_ptr = (Sleef_quad *)B;
+        Sleef_quad *out_ptr = (Sleef_quad *)out;
+
+        if (m == 0 || n == 0) {
+            for (npy_intp c = 0; c < m; c++) {
+                Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+                memcpy(out + c * out_m_stride, &zero, sizeof(Sleef_quad));
+            }
+        }
+        else if (B_is_row_major) {
+            // B is row-major (n, m). We want out = B^T @ x.
+            // Call gemv with trans='T' on B: gemv treats B with its dims (m=n, n=m).
+            size_t lda = B_n_stride / sizeof(Sleef_quad);
+            size_t incx = x_n_stride / sizeof(Sleef_quad);
+            size_t incy = out_m_stride / sizeof(Sleef_quad);
+
+            for (npy_intp c = 0; c < m; c++) {
+                Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+                memcpy(out + c * out_m_stride, &zero, sizeof(Sleef_quad));
+            }
+
+            int result = qblas_gemv('R', 'T', n, m, &alpha, B_ptr, lda, x_ptr, incx, &beta,
+                                    out_ptr, incy);
+            if (result != 0) {
+                PyErr_SetString(PyExc_RuntimeError, "QBLAS vecmat operation failed");
+                return -1;
+            }
+        }
+        else if (B_is_col_major) {
+            size_t lda = B_m_stride / sizeof(Sleef_quad);
+            size_t incx = x_n_stride / sizeof(Sleef_quad);
+            size_t incy = out_m_stride / sizeof(Sleef_quad);
+
+            for (npy_intp c = 0; c < m; c++) {
+                Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+                memcpy(out + c * out_m_stride, &zero, sizeof(Sleef_quad));
+            }
+
+            int result = qblas_gemv('C', 'T', n, m, &alpha, B_ptr, lda, x_ptr, incx, &beta,
+                                    out_ptr, incy);
+            if (result != 0) {
+                PyErr_SetString(PyExc_RuntimeError, "QBLAS vecmat operation failed");
+                return -1;
+            }
+        }
+        else {
+            // Fall back to FMA-based loop for arbitrary strides
+            for (npy_intp c = 0; c < m; c++) {
+                Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+                for (npy_intp r = 0; r < n; r++) {
+                    Sleef_quad a_val, b_val;
+                    memcpy(&a_val, x + r * x_n_stride, sizeof(Sleef_quad));
+                    memcpy(&b_val, B + r * B_n_stride + c * B_m_stride, sizeof(Sleef_quad));
+                    sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+                }
+                memcpy(out + c * out_m_stride, &sum, sizeof(Sleef_quad));
+            }
+        }
+
+        x += x_outer_stride;
+        B += B_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+quad_vecmat_strided_loop_unaligned(PyArrayMethod_Context *context, char *const data[],
+                                   npy_intp const dimensions[], npy_intp const strides[],
+                                   NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp n = dimensions[1];
+    npy_intp m = dimensions[2];
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp B_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp B_n_stride = strides[4];
+    npy_intp B_m_stride = strides[5];
+    npy_intp out_m_stride = strides[6];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    if (descr->backend != BACKEND_SLEEF) {
+        PyErr_SetString(PyExc_NotImplementedError,
+                        "QBLAS-accelerated vecmat only supports SLEEF backend.");
+        return -1;
+    }
+
+    char *x = data[0];
+    char *B = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        for (npy_intp c = 0; c < m; c++) {
+            Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+            for (npy_intp r = 0; r < n; r++) {
+                Sleef_quad a_val, b_val;
+                memcpy(&a_val, x + r * x_n_stride, sizeof(Sleef_quad));
+                memcpy(&b_val, B + r * B_n_stride + c * B_m_stride, sizeof(Sleef_quad));
+                sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+            }
+            memcpy(out + c * out_m_stride, &sum, sizeof(Sleef_quad));
+        }
+
+        x += x_outer_stride;
+        B += B_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
+static int
+naive_vecmat_strided_loop(PyArrayMethod_Context *context, char *const data[],
+                          npy_intp const dimensions[], npy_intp const strides[],
+                          NpyAuxData *auxdata)
+{
+    npy_intp N = dimensions[0];
+    npy_intp n = dimensions[1];
+    npy_intp m = dimensions[2];
+
+    npy_intp x_outer_stride = strides[0];
+    npy_intp B_outer_stride = strides[1];
+    npy_intp out_outer_stride = strides[2];
+    npy_intp x_n_stride = strides[3];
+    npy_intp B_n_stride = strides[4];
+    npy_intp B_m_stride = strides[5];
+    npy_intp out_m_stride = strides[6];
+
+    QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
+    QuadBackendType backend = descr->backend;
+
+    char *x = data[0];
+    char *B = data[1];
+    char *out = data[2];
+
+    for (npy_intp i = 0; i < N; i++) {
+        for (npy_intp c = 0; c < m; c++) {
+            if (backend == BACKEND_SLEEF) {
+                Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+                for (npy_intp r = 0; r < n; r++) {
+                    Sleef_quad a_val, b_val;
+                    memcpy(&a_val, x + r * x_n_stride, sizeof(Sleef_quad));
+                    memcpy(&b_val, B + r * B_n_stride + c * B_m_stride, sizeof(Sleef_quad));
+                    sum = Sleef_fmaq1_u05(a_val, b_val, sum);
+                }
+                memcpy(out + c * out_m_stride, &sum, sizeof(Sleef_quad));
+            }
+            else {
+                long double sum = 0.0L;
+                for (npy_intp r = 0; r < n; r++) {
+                    long double a_val, b_val;
+                    memcpy(&a_val, x + r * x_n_stride, sizeof(long double));
+                    memcpy(&b_val, B + r * B_n_stride + c * B_m_stride, sizeof(long double));
+                    sum += a_val * b_val;
+                }
+                memcpy(out + c * out_m_stride, &sum, sizeof(long double));
+            }
+        }
+
+        x += x_outer_stride;
+        B += B_outer_stride;
+        out += out_outer_stride;
+    }
+
+    return 0;
+}
+
 static int
 naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
                           npy_intp const dimensions[], npy_intp const strides[],
@@ -385,32 +953,26 @@ naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
     return 0;
 }
 
-int
-init_matmul_ops(PyObject *numpy)
+static int
+register_matmul_like_ufunc(PyObject *numpy, const char *ufunc_name, const char *spec_name,
+                           PyArrayMethod_StridedLoop *aligned_loop,
+                           PyArrayMethod_StridedLoop *unaligned_loop)
 {
-    PyObject *ufunc = PyObject_GetAttrString(numpy, "matmul");
+    PyObject *ufunc = PyObject_GetAttrString(numpy, ufunc_name);
     if (ufunc == NULL) {
         return -1;
     }
 
     PyArray_DTypeMeta *dtypes[3] = {&QuadPrecDType, &QuadPrecDType, &QuadPrecDType};
 
-#ifndef DISABLE_QUADBLAS
-
     PyType_Slot slots[] = {
             {NPY_METH_resolve_descriptors, (void *)&quad_matmul_resolve_descriptors},
-            {NPY_METH_strided_loop, (void *)&quad_matmul_strided_loop_aligned},
-            {NPY_METH_unaligned_strided_loop, (void *)&quad_matmul_strided_loop_unaligned},
+            {NPY_METH_strided_loop, (void *)aligned_loop},
+            {NPY_METH_unaligned_strided_loop, (void *)unaligned_loop},
             {0, NULL}};
-#else
-    PyType_Slot slots[] = {{NPY_METH_resolve_descriptors, (void *)&quad_matmul_resolve_descriptors},
-                           {NPY_METH_strided_loop, (void *)&naive_matmul_strided_loop},
-                           {NPY_METH_unaligned_strided_loop, (void *)&naive_matmul_strided_loop},
-                           {0, NULL}};
-#endif  // DISABLE_QUADBLAS
 
     PyArrayMethod_Spec Spec = {
-            .name = "quad_matmul_qblas",
+            .name = spec_name,
             .nin = 2,
             .nout = 1,
             .casting = NPY_NO_CASTING,
@@ -459,6 +1021,56 @@ init_matmul_ops(PyObject *numpy)
 
     Py_DECREF(promoter_capsule);
     Py_DECREF(ufunc);
+
+    return 0;
+}
+
+int
+init_matmul_ops(PyObject *numpy)
+{
+#ifndef DISABLE_QUADBLAS
+    if (register_matmul_like_ufunc(numpy, "matmul", "quad_matmul_qblas",
+                                   &quad_matmul_strided_loop_aligned,
+                                   &quad_matmul_strided_loop_unaligned) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "vecdot", "quad_vecdot_qblas",
+                                   &quad_vecdot_strided_loop_aligned,
+                                   &quad_vecdot_strided_loop_unaligned) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "matvec", "quad_matvec_qblas",
+                                   &quad_matvec_strided_loop_aligned,
+                                   &quad_matvec_strided_loop_unaligned) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "vecmat", "quad_vecmat_qblas",
+                                   &quad_vecmat_strided_loop_aligned,
+                                   &quad_vecmat_strided_loop_unaligned) < 0) {
+        return -1;
+    }
+#else
+    if (register_matmul_like_ufunc(numpy, "matmul", "quad_matmul_naive",
+                                   &naive_matmul_strided_loop,
+                                   &naive_matmul_strided_loop) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "vecdot", "quad_vecdot_naive",
+                                   &naive_vecdot_strided_loop,
+                                   &naive_vecdot_strided_loop) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "matvec", "quad_matvec_naive",
+                                   &naive_matvec_strided_loop,
+                                   &naive_matvec_strided_loop) < 0) {
+        return -1;
+    }
+    if (register_matmul_like_ufunc(numpy, "vecmat", "quad_vecmat_naive",
+                                   &naive_vecmat_strided_loop,
+                                   &naive_vecmat_strided_loop) < 0) {
+        return -1;
+    }
+#endif  // DISABLE_QUADBLAS
 
     return 0;
 }
