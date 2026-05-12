@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from utils import create_quad_array, assert_quad_equal, assert_quad_array_equal, arrays_equal_with_nan
+from utils import create_quad_array, assert_quad_equal, assert_quad_array_equal, arrays_equal_with_nan, _qnd
 from numpy_quaddtype import QuadPrecision, QuadPrecDType
 
 
@@ -687,6 +687,283 @@ class TestBasicErrorHandling:
         """Test dimension mismatch in matrix-matrix"""
         A = create_quad_array([1, 2, 3, 4], shape=(2, 2))
         B = create_quad_array([1, 2, 3, 4, 5, 6], shape=(3, 2))  # Wrong size
-        
+
         with pytest.raises(ValueError, match=r"matmul: Input operand 1 has a mismatch in its core dimension 0"):
             np.matmul(A, B)
+
+
+def _assert_matmul_matches_float64(A_q, B_q, A_f, B_f, rtol=1e-14, atol=1e-14):
+    """Compute matmul on both quad and float64 and check element-wise agreement."""
+    got = np.matmul(A_q, B_q)
+    ref = np.matmul(A_f, B_f)
+    assert got.shape == ref.shape, f"shape mismatch: got {got.shape}, ref {ref.shape}"
+    got_flat = got.ravel()
+    ref_flat = ref.ravel()
+    for i in range(ref_flat.size):
+        gv = float(got_flat[i])
+        rv = float(ref_flat[i])
+        if np.isnan(rv):
+            assert np.isnan(gv), f"index {i}: expected NaN, got {gv}"
+        elif np.isinf(rv):
+            assert np.isinf(gv) and np.sign(gv) == np.sign(rv), \
+                f"index {i}: expected inf with sign {np.sign(rv)}, got {gv}"
+        else:
+            denom = max(abs(rv), 1.0)
+            assert abs(gv - rv) <= atol + rtol * denom, \
+                f"index {i}: got {gv}, expected {rv}"
+
+
+class TestMatmulBatched:
+    """np.matmul on stacks of matrices (the N-D / broadcast case).
+
+    Every test in this class exercises an outer loop count > 1 (or a code
+    path that previously skipped batches), and compares against the
+    float64 reference for exact-shape and elementwise correctness.
+    """
+
+    # ---------- 3D @ 3D, equal batch dims (the canonical batched-GEMM case) ----------
+
+    @pytest.mark.parametrize("B", [2, 3, 5, 8, 17])
+    def test_3d_at_3d_various_batches(self, B):
+        rng = np.random.default_rng(seed=B)
+        A_f = rng.standard_normal((B, 4, 5))
+        B_f = rng.standard_normal((B, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_3d_at_3d_batch_size_one(self):
+        """Edge case: leading dim = 1 (still triggers gufunc outer loop)."""
+        rng = np.random.default_rng(seed=1)
+        A_f = rng.standard_normal((1, 3, 4))
+        B_f = rng.standard_normal((1, 4, 5))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_3d_at_3d_distinct_batches_have_distinct_results(self):
+        """Verify each batch is actually computed (not a copy of batch 0)."""
+        A_f = np.arange(2 * 3 * 4, dtype=np.float64).reshape(2, 3, 4)
+        B_f = np.arange(2 * 4 * 5, dtype=np.float64).reshape(2, 4, 5) + 100.0
+        A_q = _qnd(A_f)
+        B_q = _qnd(B_f)
+        got = np.matmul(A_q, B_q)
+        ref = np.matmul(A_f, B_f)
+        assert got.shape == ref.shape
+        # Each batch differs from the others in the reference
+        assert not np.allclose(ref[0], ref[1])
+        # And in our result
+        for b in range(ref.shape[0]):
+            for i in range(ref.shape[1]):
+                for j in range(ref.shape[2]):
+                    assert float(got[b, i, j]) == ref[b, i, j], \
+                        f"batch={b} [{i},{j}]: got {float(got[b,i,j])} vs ref {ref[b,i,j]}"
+
+    # ---------- 3D @ 2D and 2D @ 3D (broadcast one operand) ----------
+
+    def test_3d_at_2d_broadcast(self):
+        """A is 3D, B is 2D — B is reused across all batches of A."""
+        rng = np.random.default_rng(seed=7)
+        A_f = rng.standard_normal((4, 3, 5))
+        B_f = rng.standard_normal((5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_2d_at_3d_broadcast(self):
+        """A is 2D, B is 3D — A is reused across all batches of B."""
+        rng = np.random.default_rng(seed=8)
+        A_f = rng.standard_normal((3, 5))
+        B_f = rng.standard_normal((4, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_3d_at_3d_broadcast_size1_right(self):
+        """(B,M,K) @ (1,K,N) — the right operand is broadcast over batch."""
+        rng = np.random.default_rng(seed=9)
+        A_f = rng.standard_normal((4, 3, 5))
+        B_f = rng.standard_normal((1, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_3d_at_3d_broadcast_size1_left(self):
+        """(1,M,K) @ (B,K,N) — the left operand is broadcast over batch."""
+        rng = np.random.default_rng(seed=10)
+        A_f = rng.standard_normal((1, 3, 5))
+        B_f = rng.standard_normal((4, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    # ---------- 4D / 5D — two or more batch dimensions ----------
+
+    def test_4d_at_4d_two_batch_dims(self):
+        rng = np.random.default_rng(seed=11)
+        A_f = rng.standard_normal((2, 3, 4, 5))
+        B_f = rng.standard_normal((2, 3, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_4d_at_4d_mixed_broadcast(self):
+        """(3,1,M,K) @ (1,2,K,N) → (3,2,M,N) — broadcasts on multiple axes."""
+        rng = np.random.default_rng(seed=12)
+        A_f = rng.standard_normal((3, 1, 4, 5))
+        B_f = rng.standard_normal((1, 2, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_5d_at_5d(self):
+        rng = np.random.default_rng(seed=13)
+        A_f = rng.standard_normal((2, 2, 2, 3, 4))
+        B_f = rng.standard_normal((2, 2, 2, 4, 5))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_5d_with_broadcasting(self):
+        """High-rank mixed broadcasting."""
+        rng = np.random.default_rng(seed=14)
+        A_f = rng.standard_normal((2, 1, 3, 4, 5))
+        B_f = rng.standard_normal((1, 4, 1, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    # ---------- Batched DOT / GEMV-shaped inputs (different internal paths) ----------
+
+    def test_batched_dot_shaped(self):
+        """(B,1,K) @ (B,K,1) → (B,1,1) — exercises the batched DOT branch."""
+        rng = np.random.default_rng(seed=15)
+        A_f = rng.standard_normal((4, 1, 6))
+        B_f = rng.standard_normal((4, 6, 1))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_batched_gemv_shaped(self):
+        """(B,M,K) @ (B,K,1) → (B,M,1) — exercises the batched GEMV branch."""
+        rng = np.random.default_rng(seed=16)
+        A_f = rng.standard_normal((3, 4, 5))
+        B_f = rng.standard_normal((3, 5, 1))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    def test_batched_left_singleton_m(self):
+        """(B,1,K) @ (B,K,N) → (B,1,N) — m=1 with general right matrix."""
+        rng = np.random.default_rng(seed=17)
+        A_f = rng.standard_normal((4, 1, 5))
+        B_f = rng.standard_normal((4, 5, 6))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+    # ---------- 1D operand promotion + batching ----------
+
+    def test_3d_at_1d_collapsed_matvec(self):
+        """(B,M,K) @ (K,) → (B,M): 1D right operand promoted then squeezed."""
+        rng = np.random.default_rng(seed=18)
+        A_f = rng.standard_normal((4, 3, 5))
+        x_f = rng.standard_normal((5,))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(x_f), A_f, x_f)
+
+    def test_1d_at_3d_collapsed_vecmat(self):
+        """(K,) @ (B,K,N) → (B,N): 1D left operand promoted then squeezed."""
+        rng = np.random.default_rng(seed=19)
+        x_f = rng.standard_normal((5,))
+        B_f = rng.standard_normal((4, 5, 6))
+        _assert_matmul_matches_float64(_qnd(x_f), _qnd(B_f), x_f, B_f)
+
+    # ---------- Non-contiguous / Fortran-order batched matrices ----------
+
+    @pytest.mark.xfail(
+        reason="F-contiguous matmul is broken even at 2D — separate pre-existing "
+               "bug in the QBLAS dispatch path (treats col-major data as row-major). "
+               "Not related to the batch-loop fix; tracked separately."
+    )
+    def test_batched_fortran_order(self):
+        """F-contiguous batched arrays. Currently xfails due to a separate
+        pre-existing bug in the matmul aligned strided loop: it always passes
+        layout 'R' to qblas_gemm regardless of stride pattern."""
+        rng = np.random.default_rng(seed=20)
+        A_f = np.asfortranarray(rng.standard_normal((3, 4, 5)))
+        B_f = np.asfortranarray(rng.standard_normal((3, 5, 6)))
+        A_q = np.asfortranarray(_qnd(A_f))
+        B_q = np.asfortranarray(_qnd(B_f))
+        _assert_matmul_matches_float64(A_q, B_q, A_f, B_f)
+
+    def test_batched_non_contiguous_slice(self):
+        """Slice along the batch dim to produce a non-contiguous view."""
+        rng = np.random.default_rng(seed=21)
+        # 5 batches, but take every other one
+        A_full_f = rng.standard_normal((5, 3, 4))
+        B_full_f = rng.standard_normal((5, 4, 6))
+        A_f = A_full_f[::2]
+        B_f = B_full_f[::2]
+        A_q = _qnd(A_full_f)[::2]
+        B_q = _qnd(B_full_f)[::2]
+        _assert_matmul_matches_float64(A_q, B_q, A_f, B_f)
+
+    @pytest.mark.xfail(
+        reason="A.swapaxes view yields a per-batch col-major matrix; same "
+               "pre-existing layout-dispatch bug as test_batched_fortran_order. "
+               "Not related to the batch-loop fix; tracked separately."
+    )
+    def test_batched_transposed_view(self):
+        """A.swapaxes-based view of a 3D array as the batched matrix.
+
+        After swapping the last two axes, each batch is col-major. Like
+        F-order arrays, this hits the same pre-existing layout-dispatch bug.
+        """
+        rng = np.random.default_rng(seed=22)
+        A_full_f = rng.standard_normal((3, 5, 4))  # shape (B, K, M)
+        A_f = A_full_f.swapaxes(-2, -1)            # → (B, M=4, K=5) via stride trick
+        B_f = rng.standard_normal((3, 5, 6))       # (B, K=5, N=6)
+        A_q = _qnd(A_full_f).swapaxes(-2, -1)
+        B_q = _qnd(B_f)
+        assert not A_q.flags.c_contiguous
+        _assert_matmul_matches_float64(A_q, B_q, A_f, B_f)
+
+    # ---------- Special-value propagation across batches ----------
+
+    def test_nan_in_one_batch_only(self):
+        """A NaN in batch[1] must not contaminate batch[0]'s result."""
+        A_f = np.ones((2, 2, 3), dtype=np.float64)
+        B_f = np.ones((2, 3, 2), dtype=np.float64)
+        A_f[1, 0, 0] = float('nan')
+        A_q = _qnd(A_f)
+        B_q = _qnd(B_f)
+        got = np.matmul(A_q, B_q)
+        ref = np.matmul(A_f, B_f)
+        # Batch 0 should be untouched and finite
+        for i in range(2):
+            for j in range(2):
+                assert float(got[0, i, j]) == ref[0, i, j]
+        # Batch 1 row 0 should contain NaNs (NaN propagation)
+        assert np.isnan(float(got[1, 0, 0]))
+        assert np.isnan(float(got[1, 0, 1]))
+
+    def test_inf_in_one_batch_only(self):
+        """An infinity in batch[1] must not affect batch[0]."""
+        A_f = np.ones((2, 2, 3), dtype=np.float64)
+        B_f = np.ones((2, 3, 2), dtype=np.float64)
+        A_f[1, 1, 1] = float('inf')
+        A_q = _qnd(A_f)
+        B_q = _qnd(B_f)
+        got = np.matmul(A_q, B_q)
+        ref = np.matmul(A_f, B_f)
+        for i in range(2):
+            for j in range(2):
+                assert float(got[0, i, j]) == ref[0, i, j]
+        assert np.isinf(float(got[1, 1, 0]))
+        assert np.isinf(float(got[1, 1, 1]))
+
+    # ---------- out= kwarg with batched inputs ----------
+
+    def test_out_kwarg_with_batched(self):
+        """User-provided `out=` must be filled across all batches."""
+        rng = np.random.default_rng(seed=23)
+        A_f = rng.standard_normal((3, 4, 5))
+        B_f = rng.standard_normal((3, 5, 6))
+        A_q = _qnd(A_f)
+        B_q = _qnd(B_f)
+        out_q = np.zeros((3, 4, 6), dtype=QuadPrecDType(backend='sleef'))
+        result = np.matmul(A_q, B_q, out=out_q)
+        ref = np.matmul(A_f, B_f)
+        assert result is out_q
+        for b in range(3):
+            for i in range(4):
+                for j in range(6):
+                    assert abs(float(out_q[b, i, j]) - ref[b, i, j]) < 1e-12
+
+    # ---------- Larger batched sizes ----------
+
+    @pytest.mark.parametrize("batch,m,k,n", [
+        (10, 3, 4, 5),
+        (4, 8, 8, 8),
+        (32, 2, 2, 2),
+    ])
+    def test_batched_larger(self, batch, m, k, n):
+        rng = np.random.default_rng(seed=42 + batch + m + k + n)
+        A_f = rng.standard_normal((batch, m, k))
+        B_f = rng.standard_normal((batch, k, n))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f,
+                                       rtol=1e-13, atol=1e-13)
