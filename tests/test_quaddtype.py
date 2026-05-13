@@ -2629,7 +2629,8 @@ def test_array_operations():
     # Finite % infinity cases
     (5.0, float('inf')), (-5.0, float('inf')),
     (5.0, float('-inf')), (-5.0, float('-inf')),
-    (0.0, float('inf')), (-0.0, float('-inf')),
+    (0.0, float('inf')), (-0.0, float('inf')),
+    (0.0, float('-inf')), (-0.0, float('-inf')),
 
     # NaN cases (should return NaN)
     (float('nan'), 3.0), (3.0, float('nan')), (float('nan'), float('nan')),
@@ -2674,6 +2675,7 @@ def test_mod(a, b, backend, op):
     if numpy_result == 0.0:
         numpy_sign = np.signbit(numpy_result)
         quad_sign = np.signbit(quad_result)
+        assert quad_result == 0, f"Zero mismatch for {a} % {b}: numpy={numpy_result}, quad={quad_result}"
         assert numpy_sign == quad_sign, f"Zero sign mismatch for {a} % {b}: numpy={numpy_sign}, quad={quad_sign}"
 
     # Check that non-zero results have correct sign relative to divisor

@@ -629,6 +629,11 @@ quad_mod(const Sleef_quad *a, const Sleef_quad *b)
 
     // finite % inf
     if (quad_isfinite(a) && quad_isinf(b)) {
+        // 0 % inf
+        if (Sleef_icmpeqq1(*a, QUAD_PRECISION_ZERO)) {
+            return Sleef_copysignq1(*a, *b);
+        }
+        
         int sign_a = quad_signbit(a);
         int sign_b = quad_signbit(b);
 
@@ -1241,6 +1246,10 @@ ld_mod(const long double *a, const long double *b)
         return NAN;
 
     if (isfinite(*a) && isinf(*b)) {
+        // 0 % inf
+        if (*a == 0.0L) {
+            return copysignl(*a, *b);
+        }
         int sign_a = signbit(*a);
         int sign_b = signbit(*b);
         return (sign_a == sign_b) ? *a : *b;
