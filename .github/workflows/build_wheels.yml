@@ -114,7 +114,9 @@ jobs:
           path: ./wheelhouse/*.whl
           name: wheels-${{ matrix.os }}
 
-  # disabling QBLAS optimization for windows due to incompatibility with MSVC
+  # QBLAS is auto-disabled on Windows by meson.build (it uses GCC/POSIX-only
+  # constructs that MSVC does not support); the wheel falls back to the
+  # naive matmul kernel. No CFLAGS hack needed.
   build_wheels_windows:
     name: Build wheels on Windows
     runs-on: windows-latest
@@ -153,9 +155,6 @@ jobs:
           CIBW_BUILD_VERBOSITY: "3"
           DISTUTILS_USE_SDK: "1"
           MSSdk: "1"
-          CIBW_ENVIRONMENT: >
-            CFLAGS="/DDISABLE_QUADBLAS $CFLAGS"
-            CXXFLAGS="/DDISABLE_QUADBLAS $CXXFLAGS"
           CIBW_REPAIR_WHEEL_COMMAND: 'delvewheel repair -w {dest_dir} {wheel} --add-path C:\sleef\bin'
           CIBW_TEST_COMMAND_WINDOWS: pip install numpy && pip install --no-deps {wheel} && pip install pytest pytest-run-parallel && pytest -s {project}/tests
           CIBW_TEST_EXTRAS: test

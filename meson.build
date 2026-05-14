@@ -15,7 +15,22 @@ if is_windows
   add_project_arguments('-DWIN32', '-D_WINDOWS', language : ['c', 'cpp'])
 endif
 
-qblas_dep = dependency('qblas', fallback: ['qblas', 'qblas_dep'])
+# QBLAS does not build under MSVC (GCC-only flags, POSIX-only APIs, GCC
+# built-ins for CPUID); force-disable it on Windows. Users on other
+# platforms can opt out via -Ddisable_quadblas=true to fall back to the
+# naive matmul kernel.
+disable_quadblas = is_windows or get_option('disable_quadblas')
+if disable_quadblas
+  if is_windows
+    message('QBLAS disabled (Windows / MSVC) - using naive matmul kernel')
+  else
+    message('QBLAS disabled by user option - using naive matmul kernel')
+  endif
+  add_project_arguments('-DDISABLE_QUADBLAS', language: ['c', 'cpp'])
+  qblas_dep = declare_dependency()
+else
+  qblas_dep = dependency('qblas', fallback: ['qblas', 'qblas_dep'])
+endif
 
 # Try to find SLEEF system-wide first, fall back to subproject if not found
 # Required SLEEF version (must match sleef.wrap revision)
