@@ -15,25 +15,11 @@ if is_windows
   add_project_arguments('-DWIN32', '-D_WINDOWS', language : ['c', 'cpp'])
 endif
 
-# QBLAS does not build under MSVC (GCC-only flags, POSIX-only APIs, GCC
-# built-ins for CPUID); force-disable it on Windows. Users on other
-# platforms can opt out via -Ddisable_quadblas=true to fall back to the
-# naive matmul kernel.
-disable_quadblas = is_windows or get_option('disable_quadblas')
-if disable_quadblas
-  if is_windows
-    message('QBLAS disabled (Windows / MSVC) - using naive matmul kernel')
-  else
-    message('QBLAS disabled by user option - using naive matmul kernel')
-  endif
-  add_project_arguments('-DDISABLE_QUADBLAS', language: ['c', 'cpp'])
-  qblas_dep = declare_dependency()
-else
-  qblas_dep = dependency('qblas', fallback: ['qblas', 'qblas_dep'])
-endif
-
-# Try to find SLEEF system-wide first, fall back to subproject if not found
-# Required SLEEF version (must match sleef.wrap revision)
+# Resolve SLEEF BEFORE the QBLAS subproject. QBLAS calls subproject('sleef')
+# without options when it's loaded as a subproject, and meson caches the
+# first subproject() call - so if QBLAS were loaded first, our disable_fma
+# option would be silently dropped (the SLEEF instance with FMA enabled
+# would be the one shipped, breaking Sandy Bridge SDE tests).
 required_sleef_version = '3.9.0'
 # Don't use fallback here - we need to call subproject() explicitly later with disable_fma option
 sleef_dep = dependency('sleef', version: '>=' + required_sleef_version, required: false)
@@ -45,7 +31,7 @@ if sleef_dep.found() and sleef_dep.version().startswith(required_sleef_version)
   # SLEEF found system-wide - verify quad-precision support
   cpp = meson.get_compiler('cpp')
   sleefquad_lib = cpp.find_library('sleefquad', required: false)
-  
+
   if sleefquad_lib.found()
     sleefquad_test_code = '''
     #include <sleefquad.h>
@@ -63,7 +49,7 @@ if sleef_dep.found() and sleef_dep.version().startswith(required_sleef_version)
       dependencies: [sleef_dep, sleefquad_lib],
       name: 'SLEEF quad-precision support'
     )
-    
+
     if quad_works
       sleefquad_dep = declare_dependency(
         dependencies: [sleef_dep, sleefquad_lib]
@@ -93,6 +79,23 @@ else
   sleefquad_dep = sleef_subproj.get_variable('sleefquad_dep')
   warning(fallback_reason)
   message('Proceeding with vendored SLEEF subproject instead')
+endif
+
+# QBLAS does not build under MSVC (GCC-only flags, POSIX-only APIs, GCC
+# built-ins for CPUID); force-disable it on Windows. Users on other
+# platforms can opt out via -Ddisable_quadblas=true to fall back to the
+# naive matmul kernel.
+disable_quadblas = is_windows or get_option('disable_quadblas')
+if disable_quadblas
+  if is_windows
+    message('QBLAS disabled (Windows / MSVC) - using naive matmul kernel')
+  else
+    message('QBLAS disabled by user option - using naive matmul kernel')
+  endif
+  add_project_arguments('-DDISABLE_QUADBLAS', language: ['c', 'cpp'])
+  qblas_dep = declare_dependency()
+else
+  qblas_dep = dependency('qblas', fallback: ['qblas', 'qblas_dep'])
 endif
 
 incdir_numpy = run_command(py,
