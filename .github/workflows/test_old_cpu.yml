@@ -11,6 +11,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test_old_cpu:
     name: Test on ${{ matrix.cpu[1] }}
