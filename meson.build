@@ -15,11 +15,7 @@ if is_windows
   add_project_arguments('-DWIN32', '-D_WINDOWS', language : ['c', 'cpp'])
 endif
 
-# Resolve SLEEF BEFORE the QBLAS subproject. QBLAS calls subproject('sleef')
-# without options when it's loaded as a subproject, and meson caches the
-# first subproject() call - so if QBLAS were loaded first, our disable_fma
-# option would be silently dropped (the SLEEF instance with FMA enabled
-# would be the one shipped, breaking Sandy Bridge SDE tests).
+
 required_sleef_version = '3.9.0'
 # Don't use fallback here - we need to call subproject() explicitly later with disable_fma option
 sleef_dep = dependency('sleef', version: '>=' + required_sleef_version, required: false)

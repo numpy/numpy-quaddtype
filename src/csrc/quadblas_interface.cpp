@@ -1,14 +1,4 @@
-/* numpy-quaddtype shim around QBLAS.
- *
- * The legacy code called the QuadBLAS:: C++ template namespace from the
- * pre-overhaul, header-only QBLAS.  The current QBLAS (branch
- * `overhaul-rewrite`) exposes a stable C ABI in `qblas/qblas.h` with
- * CBLAS-style entry points (`cblas_qdot`, `cblas_qgemm`, …) and runtime
- * SIMD dispatch (sse2/avx2/avx512/neon).  This file translates the
- * `qblas_dot` / `qblas_gemv` / `qblas_gemm` symbols that the rest of
- * numpy-quaddtype calls into the new CBLAS-style API.  Function
- * signatures exposed to the rest of the package are unchanged.
- */
+// numpy-quaddtype shim around QBLAS.
 
 #include "quadblas_interface.h"
 #include <cstring>
@@ -79,7 +69,6 @@ qblas_gemm(char layout, char transa, char transb,
 int
 qblas_supports_backend(QuadBackendType backend)
 {
-    /* QBLAS only supports the SLEEF backend (it is built on top of SLEEF). */
     return (backend == BACKEND_SLEEF) ? 1 : 0;
 }
 
