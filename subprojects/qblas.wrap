@@ -1,7 +1,7 @@
 [wrap-git]
 directory = qblas
 url = https://github.com/SwayamInSync/QBLAS.git
-revision = overhaul-rewrite
+revision = 8deb36b67ae4d2c81dfca2ceac8957deb8f23c9b
 
 [provide]
 qblas = qblas_dep
