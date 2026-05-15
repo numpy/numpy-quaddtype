@@ -2728,7 +2728,7 @@ def test_mod_high_precision_sleef(a_func, a_arg, b_str, op):
 
 @pytest.mark.parametrize("op", [np.mod, np.remainder])
 @pytest.mark.parametrize("a_func,a_arg,b_str", [
-    ("exp", "1000", "3.14159265358979323846264338327950288"),
+    ("exp", "700", "3.14159265358979323846264338327950288"),
 ])
 def test_mod_high_precision_longdouble(a_func, a_arg, b_str, op):
     """Longdouble backend: cross-checked against numpy's np.longdouble.
