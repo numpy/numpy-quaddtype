@@ -2688,50 +2688,67 @@ def test_mod(a, b, backend, op):
         assert result_negative == numpy_negative, f"Sign mismatch for {a} % {b}: quad={result_negative}, numpy={numpy_negative}"
 
 
-@pytest.mark.parametrize("backend", ["sleef", "longdouble"])
 @pytest.mark.parametrize("op", [np.mod, np.remainder])
 @pytest.mark.parametrize("a_func,a_arg,b_str", [
-    # Regression: huge dividend, finite divisor. cosh(-11357.2...) overflows
-    # f64 by thousands of orders of magnitude, so |a/b| is enormous. The old
-    # `a - floor(a/b)*b` formula loses precision here because 0.5 ulp of the
-    # quotient corresponds to a huge absolute error. The fmod-based path
-    # avoids this. The cosh value (~1.19e+4932) also exceeds LDBL_MAX,
-    # so longdouble is skipped for these cases.
+    # Regression: huge dividend, finite divisor. cosh(-11357.2...) is
+    # ~1.19e+4932, so |a/b| is enormous. The old `a - floor(a/b)*b` formula
+    # lost all precision here because 0.5 ulp of the quotient corresponds
+    # to a huge absolute error. The fmod-based path avoids this.
     ("cosh", "-11357.216553474703894801348310092223",
      "-1.7976931345860068e+308"),
+    # Same with mismatched signs — exercises the Python-convention sign
+    # adjustment on a huge result.
     ("cosh", "-11357.216553474703894801348310092223",
      "1.7976931345860068e+308"),
-    # Large quotient, small divisor — within long double range so both
-    # backends can be tested.
+    # Large quotient, small divisor.
     ("exp", "1000", "3.14159265358979323846264338327950288"),
 ])
-def test_mod_high_precision(a_func, a_arg, b_str, op, backend):
-    """Regression: mod must stay accurate when |a/b| is astronomically large.
+def test_mod_high_precision_sleef(a_func, a_arg, b_str, op):
+    """Sleef backend: verified against mpmath at binary128 precision.
 
-    Verified against mpmath; numpy f64 cannot represent these inputs, so the
-    standard test_mod path doesn't catch this. Precision of the comparison
-    is chosen to match the backend's working precision.
+    These inputs lie far outside f64 range, so the standard test_mod path
+    cannot exercise them — mpmath is the only viable ground truth.
     """
-    np_func = getattr(np, a_func)
-    quad_a = np_func(QuadPrecision(a_arg, backend=backend))
-    if not np.isfinite(quad_a):
-        pytest.skip(f"{a_func}({a_arg}) overflows the {backend} backend")
-    quad_b = QuadPrecision(b_str, backend=backend)
-
-    # mpmath ground truth at the backend's precision (sleef = 113-bit
-    # binary128, longdouble = typically 64-bit x86 extended on Linux).
-    mp.prec = 113 if backend == "sleef" else 64
-    mp_func = getattr(mp, a_func)
-    mp_a = mp_func(mp.mpf(a_arg))
+    mp.prec = 113
+    mp_a = getattr(mp, a_func)(mp.mpf(a_arg))
     mp_b = mp.mpf(b_str)
-    # mp.fmod follows Python convention (sign of divisor), matching np.mod.
+    # mp.fmod is Python-style (sign of divisor), matching np.mod.
     mp_result = mp.fmod(mp_a, mp_b)
-    expected = QuadPrecision(mp.nstr(mp_result, 36), backend=backend)
+    expected = QuadPrecision(mp.nstr(mp_result, 36))
+
+    quad_a = getattr(np, a_func)(QuadPrecision(a_arg))
+    quad_b = QuadPrecision(b_str)
     quad_result = op(quad_a, quad_b)
-    rtol = 1e-32 if backend == "sleef" else 1e-18
-    assert np.isclose(quad_result, expected, rtol=rtol, atol=0), (
-        f"High-precision mismatch for {op.__name__}({a_func}({a_arg}), {b_str}) "
-        f"[{backend}]: quad={quad_result}, expected={expected}"
+
+    assert np.isclose(quad_result, expected, rtol=1e-34, atol=0), (
+        f"sleef mismatch for {op.__name__}({a_func}({a_arg}), {b_str}): "
+        f"quad={quad_result}, expected={expected}"
+    )
+
+
+@pytest.mark.parametrize("op", [np.mod, np.remainder])
+@pytest.mark.parametrize("a_func,a_arg,b_str", [
+    ("exp", "1000", "3.14159265358979323846264338327950288"),
+])
+def test_mod_high_precision_longdouble(a_func, a_arg, b_str, op):
+    """Longdouble backend: cross-checked against numpy's np.longdouble.
+
+    The backend stores a C `long double`, the same type as np.longdouble,
+    so np.mod on np.longdouble inputs is a direct same-precision reference
+    and the result should match bit-for-bit.
+    """
+    np_a = getattr(np, a_func)(np.longdouble(a_arg))
+    np_b = np.longdouble(b_str)
+    expected = op(np_a, np_b)
+
+    quad_a = getattr(np, a_func)(QuadPrecision(a_arg, backend="longdouble"))
+    quad_b = QuadPrecision(b_str, backend="longdouble")
+    quad_result = op(quad_a, quad_b)
+
+    # np.longdouble(QuadPrecision) is a lossless cast (same underlying type).
+    assert np.longdouble(quad_result) == expected, (
+        f"longdouble mismatch for {op.__name__}({a_func}({a_arg}), {b_str}): "
+        f"quad={np.longdouble(quad_result)!r}, expected={expected!r}"
     )
 
 
