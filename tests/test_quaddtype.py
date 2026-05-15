@@ -2689,6 +2689,53 @@ def test_mod(a, b, backend, op):
 
 
 @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+@pytest.mark.parametrize("op", [np.mod, np.remainder])
+@pytest.mark.parametrize("a_func,a_arg,b_str", [
+    # Regression: huge dividend, finite divisor. cosh(-11357.2...) overflows
+    # f64 by thousands of orders of magnitude, so |a/b| is enormous. The old
+    # `a - floor(a/b)*b` formula loses precision here because 0.5 ulp of the
+    # quotient corresponds to a huge absolute error. The fmod-based path
+    # avoids this. The cosh value (~1.19e+4932) also exceeds LDBL_MAX,
+    # so longdouble is skipped for these cases.
+    ("cosh", "-11357.216553474703894801348310092223",
+     "-1.7976931345860068e+308"),
+    ("cosh", "-11357.216553474703894801348310092223",
+     "1.7976931345860068e+308"),
+    # Large quotient, small divisor — within long double range so both
+    # backends can be tested.
+    ("exp", "1000", "3.14159265358979323846264338327950288"),
+])
+def test_mod_high_precision(a_func, a_arg, b_str, op, backend):
+    """Regression: mod must stay accurate when |a/b| is astronomically large.
+
+    Verified against mpmath; numpy f64 cannot represent these inputs, so the
+    standard test_mod path doesn't catch this. Precision of the comparison
+    is chosen to match the backend's working precision.
+    """
+    np_func = getattr(np, a_func)
+    quad_a = np_func(QuadPrecision(a_arg, backend=backend))
+    if not np.isfinite(quad_a):
+        pytest.skip(f"{a_func}({a_arg}) overflows the {backend} backend")
+    quad_b = QuadPrecision(b_str, backend=backend)
+
+    # mpmath ground truth at the backend's precision (sleef = 113-bit
+    # binary128, longdouble = typically 64-bit x86 extended on Linux).
+    mp.prec = 113 if backend == "sleef" else 64
+    mp_func = getattr(mp, a_func)
+    mp_a = mp_func(mp.mpf(a_arg))
+    mp_b = mp.mpf(b_str)
+    # mp.fmod follows Python convention (sign of divisor), matching np.mod.
+    mp_result = mp.fmod(mp_a, mp_b)
+    expected = QuadPrecision(mp.nstr(mp_result, 36), backend=backend)
+    quad_result = op(quad_a, quad_b)
+    rtol = 1e-32 if backend == "sleef" else 1e-18
+    assert np.isclose(quad_result, expected, rtol=rtol, atol=0), (
+        f"High-precision mismatch for {op.__name__}({a_func}({a_arg}), {b_str}) "
+        f"[{backend}]: quad={quad_result}, expected={expected}"
+    )
+
+
+@pytest.mark.parametrize("backend", ["sleef", "longdouble"])
 @pytest.mark.parametrize("a,b", [
     # Basic cases - positive/positive
     (7.0, 3.0), (10.5, 3.2), (21.0, 4.0),
