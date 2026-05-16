@@ -664,12 +664,7 @@ quad_mod(const Sleef_quad *a, const Sleef_quad *b)
     // Handle zero result sign: when result is exactly zero,
     // it should have the same sign as the divisor (NumPy convention)
     if (Sleef_icmpeqq1(result, QUAD_PRECISION_ZERO)) {
-        if (Sleef_icmpltq1(*b, QUAD_PRECISION_ZERO)) {
-            return Sleef_negq1(QUAD_PRECISION_ZERO);  // -0.0
-        }
-        else {
-            return QUAD_PRECISION_ZERO;  // +0.0
-        }
+        return Sleef_copysignq1(QUAD_PRECISION_ZERO, *b);
     }
 
     return result;
