@@ -541,6 +541,22 @@ def test_supported_astype(dtype):
     assert back == orig
 
 
+@pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+@pytest.mark.parametrize("nan_str", ["nan", "-nan"])
+@pytest.mark.parametrize("dtype", [
+    "byte", "int8", "ubyte", "uint8",
+    "short", "int16", "ushort", "uint16",
+    "int", "int32", "uint", "uint32",
+    "long", "ulong",
+    "longlong", "int64", "ulonglong", "uint64",
+])
+def test_astype_nan_to_int_is_zero(dtype, nan_str, backend):
+    """NaN cast to any integer type must yield 0 (NumPy convention). Regression: gh-98."""
+    arr = np.array([QuadPrecision(nan_str, backend=backend)])
+    result = arr.astype(dtype)
+    assert result[0] == 0
+
+
 @pytest.mark.parametrize("dtype", ["V10", "datetime64[ms]", "timedelta64[ms]"])
 def test_unsupported_astype(dtype):
     if dtype == "V10":

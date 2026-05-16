@@ -1223,13 +1223,25 @@ from_quad<spec_npy_bool>(const quad_value *x, QuadBackendType backend)
     }
 }
 
+// NumPy convention: casting NaN to any integer type yields 0.
+// Without this, SLEEF saturates NaN to INT_MAX / UINT_MAX, and the
+// long-double path invokes undefined behavior. See gh-98.
+static inline bool
+quad_is_nan(const quad_value *x, QuadBackendType backend)
+{
+    if (backend == BACKEND_SLEEF) {
+        return quad_isnan(&x->sleef_value);
+    }
+    return std::isnan(x->longdouble_value);
+}
+
 template <>
 inline npy_byte
 from_quad<npy_byte>(const quad_value *x, QuadBackendType backend)
 {
-    // runtime warnings often comes from/to casting of NaN, inf
-    // casting is used by ops at several positions leading to warnings
-    // fix can be catching the cases and returning corresponding type value without casting
+    if (quad_is_nan(x, backend)) {
+        return (npy_byte)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_byte)Sleef_cast_to_int64q1(x->sleef_value);
     }
@@ -1242,6 +1254,9 @@ template <>
 inline npy_ubyte
 from_quad<npy_ubyte>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_ubyte)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_ubyte)Sleef_cast_to_uint64q1(x->sleef_value);
     }
@@ -1254,6 +1269,9 @@ template <>
 inline npy_short
 from_quad<npy_short>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_short)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_short)Sleef_cast_to_int64q1(x->sleef_value);
     }
@@ -1266,6 +1284,9 @@ template <>
 inline npy_ushort
 from_quad<npy_ushort>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_ushort)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_ushort)Sleef_cast_to_uint64q1(x->sleef_value);
     }
@@ -1278,6 +1299,9 @@ template <>
 inline npy_int
 from_quad<npy_int>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_int)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_int)Sleef_cast_to_int64q1(x->sleef_value);
     }
@@ -1290,6 +1314,9 @@ template <>
 inline npy_uint
 from_quad<npy_uint>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_uint)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_uint)Sleef_cast_to_uint64q1(x->sleef_value);
     }
@@ -1302,6 +1329,9 @@ template <>
 inline npy_long
 from_quad<npy_long>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_long)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_long)Sleef_cast_to_int64q1(x->sleef_value);
     }
@@ -1314,6 +1344,9 @@ template <>
 inline npy_ulong
 from_quad<npy_ulong>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_ulong)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return (npy_ulong)Sleef_cast_to_uint64q1(x->sleef_value);
     }
@@ -1326,6 +1359,9 @@ template <>
 inline npy_longlong
 from_quad<npy_longlong>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_longlong)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return Sleef_cast_to_int64q1(x->sleef_value);
     }
@@ -1338,6 +1374,9 @@ template <>
 inline npy_ulonglong
 from_quad<npy_ulonglong>(const quad_value *x, QuadBackendType backend)
 {
+    if (quad_is_nan(x, backend)) {
+        return (npy_ulonglong)0;
+    }
     if (backend == BACKEND_SLEEF) {
         return Sleef_cast_to_uint64q1(x->sleef_value);
     }
