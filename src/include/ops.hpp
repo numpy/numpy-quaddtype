@@ -612,7 +612,11 @@ quad_pow(const Sleef_quad *a, const Sleef_quad *b)
 inline Sleef_quad
 quad_mod(const Sleef_quad *a, const Sleef_quad *b)
 {
-    // division by zero
+    // Division by zero -> NaN. IEEE 754 leaves the sign of a NaN unspecified,
+    // and libc fmod's NaN payload varies by platform (e.g. x86 glibc returns
+    // signbit=1, other libms may return signbit=0). We return our canonical
+    // NaN unconditionally; callers comparing against numpy should use isnan,
+    // not signbit, for this branch.
     if (Sleef_icmpeqq1(*b, QUAD_PRECISION_ZERO)) {
         return QUAD_PRECISION_NAN;
     }
@@ -640,22 +644,27 @@ quad_mod(const Sleef_quad *a, const Sleef_quad *b)
         // return a if sign_a == sign_b
         return (sign_a == sign_b) ? *a : *b;
     }
+    
+    // In floor(a/b) the a/b gives the rounded quotient, off by at most 0.5ULP.
+    // But "0.5 ulp of the quotient" can correspond to a huge absolute error when the quotient itself is huge.
+    // hence, taking the fmod path
+    Sleef_quad result = Sleef_fmodq1(*a, *b);
+    // if result != 0 and sign(result) != sign(b)
+    if (!Sleef_icmpeqq1(result, QUAD_PRECISION_ZERO) && (quad_signbit(&result) != quad_signbit(b))) 
+    {
+      /*  Interesting thing, as per "Sterbenz lemma" (https://en.wikipedia.org/wiki/Sterbenz_lemma):
+            |b|/2 ≤ |result| < |b| => result is exact, and thus we can add b without losing precision
+            |result| < |b|/2 => inexact but bounded by 0.5 ulp
 
-    // NumPy mod formula: a % b = a - floor(a/b) * b
-    Sleef_quad quotient = Sleef_divq1_u05(*a, *b);
-    Sleef_quad floored = Sleef_floorq1(quotient);
-    Sleef_quad product = Sleef_mulq1_u05(floored, *b);
-    Sleef_quad result = Sleef_subq1_u05(*a, product);
+          In both the cases the final output will always within max of 0.5 ulp error (as documented by Sleef_addq1_u05) hence we will be in safe range.
+      */
+      result = Sleef_addq1_u05(result, *b);
+    }
 
     // Handle zero result sign: when result is exactly zero,
     // it should have the same sign as the divisor (NumPy convention)
     if (Sleef_icmpeqq1(result, QUAD_PRECISION_ZERO)) {
-        if (Sleef_icmpltq1(*b, QUAD_PRECISION_ZERO)) {
-            return Sleef_negq1(QUAD_PRECISION_ZERO);  // -0.0
-        }
-        else {
-            return QUAD_PRECISION_ZERO;  // +0.0
-        }
+        return Sleef_copysignq1(QUAD_PRECISION_ZERO, *b);
     }
 
     return result;
@@ -669,7 +678,11 @@ quad_fmod(const Sleef_quad *a, const Sleef_quad *b)
         return Sleef_iunordq1(*a, *a) ? *a : *b;
     }
     
-    // Division by zero -> NaN
+    // Division by zero -> NaN. IEEE 754 leaves the sign of a NaN unspecified,
+    // and libc fmod's NaN payload varies by platform (e.g. x86 glibc returns
+    // signbit=1, other libms may return signbit=0). We return our canonical
+    // NaN unconditionally; callers comparing against numpy should use isnan,
+    // not signbit, for this branch.
     if (Sleef_icmpeqq1(*b, QUAD_PRECISION_ZERO)) {
         return QUAD_PRECISION_NAN;
     }
@@ -1255,12 +1268,13 @@ ld_mod(const long double *a, const long double *b)
         return (sign_a == sign_b) ? *a : *b;
     }
 
-    long double quotient = (*a) / (*b);
-    long double floored = floorl(quotient);
-    long double result = (*a) - floored * (*b);
+    long double result = fmodl(*a, *b);
+    if (result != 0.0L && signbit(result) != signbit(*b)) {
+        result += *b;
+    }
 
     if (result == 0.0L) {
-        return (*b < 0.0L) ? -0.0L : 0.0L;
+        return copysignl(0.0L, *b);
     }
 
     return result;
