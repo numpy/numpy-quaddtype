@@ -144,7 +144,7 @@ quad_richcompare(QuadPrecisionObject *self, PyObject *other, int cmp_op)
             return NULL;
         }
     }
-    else if (PyLong_CheckExact(other) || PyFloat_CheckExact(other)) {
+    else if (PyLong_Check(other) || PyFloat_Check(other)) {
         other_quad = QuadPrecision_from_object(other, backend);
         if (other_quad == NULL) {
             return NULL;
