@@ -1,8 +1,4 @@
-name: Test on Older CPUs (x86_64-v2)
-
-# This workflow tests numpy-quaddtype on older x86 CPUs using Intel SDE.
-# It ensures compatibility with x86_64-v2 baseline CPUs (e.g., Sandy Bridge)
-# that don't have AVX2/FMA support.
+name: Test Older CPUs + Build Options
 
 on:
   push:
@@ -13,14 +9,21 @@ on:
 
 jobs:
   test_old_cpu:
-    name: Test on ${{ matrix.cpu[1] }}
+    name: Test ${{ matrix.config.name }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        cpu:
-          - ['snb', 'Sandy Bridge (x86_64-v2)']
-          - ['hsw', 'Haswell (x86_64-v3)']
+        config:
+          - name: "Sandy Bridge (x86_64-v2)"
+            sde_cpu: "snb"
+            meson_args: "-Csetup-args=-Ddisable_fma=true"
+          - name: "Haswell (x86_64-v3)"
+            sde_cpu: "hsw"
+            meson_args: ""
+          - name: "Haswell, no QBLAS"
+            sde_cpu: "hsw"
+            meson_args: "-Csetup-args=-Ddisable_quadblas=true"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,27 +54,21 @@ jobs:
         env:
           LDFLAGS: "-fopenmp"
         run: |
-          # For Sandy Bridge (x86-64-v2), we need to disable FMA code paths
-          # since FMA instructions are not available on that microarchitecture
-          if [ "${{ matrix.cpu[0] }}" = "snb" ]; then
-            pip install .[test] --no-build-isolation -v -Csetup-args=-Ddisable_fma=true
-          else
-            pip install .[test] --no-build-isolation -v
-          fi
+          pip install .[test] --no-build-isolation -v ${{ matrix.config.meson_args }}
 
-      - name: Test import on ${{ matrix.cpu[1] }}
+      - name: Test import on ${{ matrix.config.name }}
         run: |
-          echo "Testing basic import on ${{ matrix.cpu[1] }}..."
-          sde -${{ matrix.cpu[0] }} -- python -c "
+          echo "Testing basic import on ${{ matrix.config.name }}..."
+          sde -${{ matrix.config.sde_cpu }} -- python -c "
           import numpy as np
           print('NumPy version:', np.__version__)
           from numpy_quaddtype import QuadPrecDType
           print('QuadPrecDType imported successfully!')
           arr = np.zeros(3, dtype=QuadPrecDType())
           print('Created quad array:', arr)
-          print('SUCCESS: Works on ${{ matrix.cpu[1] }}!')
+          print('SUCCESS: Works on ${{ matrix.config.name }}!')
           "
 
-      - name: Run tests on ${{ matrix.cpu[1] }}
+      - name: Run tests on ${{ matrix.config.name }}
         run: |
-          sde -${{ matrix.cpu[0] }} -- python -m pytest tests/ -v --tb=short -v -s
+          sde -${{ matrix.config.sde_cpu }} -- python -m pytest tests/ -v --tb=short -v -s

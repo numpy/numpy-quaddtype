@@ -115,15 +115,6 @@ npymath_lib = c.find_library('npymath', dirs: npymath_path)
 
 dependencies = [py_dep, qblas_dep, sleef_dep, sleefquad_dep, npymath_lib]
 
-# OpenMP is not used directly by any source in this package (#pragma omp
-# is absent); it only matters because qblas's static lib has OpenMP
-# objects baked in. qblas_dep already propagates the OpenMP requirement
-# transitively, so adding a second dependency('openmp') here would put
-# OpenMP into the compile-args closure twice. On Apple's clang++ that
-# duplication leaves an orphan '-Xpreprocessor' in $ARGS which then
-# pairs with '-MD' from the dep-gen flags ('-Xpreprocessor -MD'), and
-# the preprocessor rejects -MD as unknown - failing all C++ compiles.
-
 # compiler flags for QBLAS compatibility
 if not is_windows
     # QBLAS requires extended numeric literals for Q suffix support

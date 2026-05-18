@@ -116,7 +116,7 @@ jobs:
 
   # QBLAS is auto-disabled on Windows by meson.build (it uses GCC/POSIX-only
   # constructs that MSVC does not support); the wheel falls back to the
-  # naive matmul kernel. No CFLAGS hack needed.
+  # naive matmul kernel.
   build_wheels_windows:
     name: Build wheels on Windows
     runs-on: windows-latest
