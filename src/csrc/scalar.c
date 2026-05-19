@@ -2,6 +2,7 @@
 #include <sleef.h>
 #include <sleefquad.h>
 #include <stdlib.h>
+#include <float.h>
 
 #define PY_ARRAY_UNIQUE_SYMBOL QuadPrecType_ARRAY_API
 #define NPY_NO_DEPRECATED_API NPY_2_0_API_VERSION
@@ -620,10 +621,15 @@ QuadPrecision_reduce(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored))
                                                  opt.trim_mode, opt.digits_left, opt.exp_digits);
     }
     else {
-        Sleef_quad sleef_val = Sleef_cast_from_doubleq1(self->value.longdouble_value);
-        str_value = Dragon4_Scientific_QuadDType(&sleef_val, opt.digit_mode, opt.precision,
-                                                 opt.min_digits, opt.sign, opt.trim_mode,
-                                                 opt.digits_left, opt.exp_digits);
+        char buffer[128];
+        int written = snprintf(buffer, sizeof(buffer), "%.*Le",
+                               LDBL_DECIMAL_DIG - 1, self->value.longdouble_value);
+        if (written < 0 || written >= (int)sizeof(buffer)) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "Failed to format long double for pickle");
+            return NULL;
+        }
+        str_value = PyUnicode_FromString(buffer);
     }
     if (str_value == NULL) {
         return NULL;

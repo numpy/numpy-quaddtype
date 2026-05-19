@@ -5412,6 +5412,24 @@ class TestScalarPickle:
         loaded = pickle.loads(pickle.dumps(QuadPrecision("1.0")))
         assert type(loaded) is QuadPrecision
 
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_preserves_full_precision(self, backend):
+        """Diagnostic precision-loss test. Two values with the same printed
+        repr can still differ at the full bit width, so check via subtraction
+        (which preserves precision) — `loaded - original` must be exactly zero.
+        Catches the regression where the longdouble path went through (double)."""
+        import pickle
+        # A value with more than 16 significant digits — exercises precision
+        # beyond what double can represent.
+        original = QuadPrecision("3.14159265358979323846264338327950288",
+                                 backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        diff = loaded - original
+        assert diff == QuadPrecision("0.0", backend=backend), (
+            f"pickle round-trip lost precision on {backend}: "
+            f"loaded - original = {diff!r}"
+        )
+
     def test_pickle_scalar_preserves_backend_across_mix(self):
         """Each backend pickle must come back as the same backend, not silently
         defaulting to sleef."""
