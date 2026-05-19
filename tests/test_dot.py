@@ -417,11 +417,98 @@ class TestDegenerateCases:
         """Test matrices with repeated columns"""
         A = create_quad_array([1, 0, 0, 0, 1, 0, 0, 0, 1], shape=(3, 3))  # Identity
         B = create_quad_array([2, 2, 2, 3, 3, 3, 4, 4, 4], shape=(3, 3))  # Each column repeated
-        
         result = np.matmul(A, B)
-        
         # Result should be same as B (identity multiplication)
         assert_quad_array_equal(result, B)
+
+
+class TestEmptyDimensions:
+    """Test operations with empty dimensions (zero-length)"""
+    dtype = QuadPrecDType(backend='sleef')
+
+    @pytest.mark.parametrize("A_shape,B_shape", [
+        ((0,),    (0,)),     # 1-D dot,    n=0       → scalar 0
+        ((0, 3),  (3, 4)),   # GEMM,       m=0       → (0, 4)
+        ((2, 0),  (0, 3)),   # GEMM,       k=0       → (2, 3) zeros
+        ((2, 3),  (3, 0)),   # GEMM,       p=0       → (2, 0)
+        ((3, 0),  (0,)),     # GEMV,       n=0       → (3,) zeros
+        ((0, 3),  (3,)),     # GEMV,       m=0       → (0,)
+    ], ids=lambda s: "x".join(str(d) for d in s))
+    def test_empty_matmul_matches_float64(self, A_shape, B_shape):
+        A_q = np.zeros(A_shape, dtype=self.dtype)
+        B_q = np.zeros(B_shape, dtype=self.dtype)
+        A_f = np.zeros(A_shape, dtype=np.float64)
+        B_f = np.zeros(B_shape, dtype=np.float64)
+
+        R_q = np.matmul(A_q, B_q)
+        R_f = np.matmul(A_f, B_f)
+
+        # 1-D dot returns a 0-d scalar QuadPrecision (no .shape attribute).
+        q_shape = () if isinstance(R_q, QuadPrecision) else R_q.shape
+        assert q_shape == R_f.shape, f"shape {q_shape} != float64 {R_f.shape}"
+        assert R_q.dtype == self.dtype
+
+        R_q_as_f = (np.float64(R_q) if isinstance(R_q, QuadPrecision)
+                    else np.asarray(R_q).astype(np.float64))
+        assert np.array_equal(R_q_as_f, R_f), f"values {R_q_as_f!r} != {R_f!r}"
+
+
+class TestOutKeyword:
+    """np.matmul with a pre-allocated `out=` array. The result must be
+    written into `out` and `out` must be returned (numpy ufunc semantics)."""
+
+    dtype = QuadPrecDType(backend='sleef')
+
+    @pytest.mark.parametrize("A_shape,B_shape,out_shape", [
+        ((2, 3),  (3, 4),  (2, 4)),    # GEMM
+        ((4, 5),  (5,),    (4,)),      # GEMV
+        ((1, 3),  (3, 1),  (1, 1)),    # 1x1 GEMM degenerate
+    ], ids=lambda s: "x".join(str(d) for d in s) if s else "scalar")
+    def test_out_writes_in_place(self, A_shape, B_shape, out_shape):
+        rng = np.random.default_rng(seed=7)
+        A_f = rng.standard_normal(A_shape)
+        B_f = rng.standard_normal(B_shape)
+        A_q = _qnd(A_f)
+        B_q = _qnd(B_f)
+
+        # Pre-fill `out` with a sentinel; matmul must overwrite every cell.
+        out = np.full(out_shape, 999.0, dtype=self.dtype)
+        result = np.matmul(A_q, B_q, out=out)
+
+        assert result is out, "np.matmul should return the `out` array"
+        assert out.dtype == self.dtype
+
+        ref = np.matmul(A_f, B_f)
+        out_as_f = np.asarray(out).astype(np.float64)
+        # Sentinel must be gone everywhere — catches partial writes.
+        assert not np.any(out_as_f == 999.0), "sentinel cells were not written"
+        assert out_as_f.shape == ref.shape
+        np.testing.assert_allclose(out_as_f, ref, rtol=1e-14, atol=1e-14)
+
+    def test_out_wrong_shape_raises(self):
+        """Mismatched `out` shape must raise (numpy enforces this, not us,
+        but the resolver shouldn't crash trying)."""
+        A = _qnd(np.ones((2, 3)))
+        B = _qnd(np.ones((3, 4)))
+        bad_out = np.zeros((2, 5), dtype=self.dtype)  # wrong cols
+        with pytest.raises(ValueError):
+            np.matmul(A, B, out=bad_out)
+
+
+class TestMixedBackend:
+    """matmul with backend-mismatched or non-SLEEF operands must fail cleanly
+    rather than crash. The exception class is loose because M2 may change
+    the longdouble path; the contract here is just 'raises, no segfault'."""
+
+    @pytest.mark.parametrize("backend_a,backend_b", [
+        ("sleef",      "longdouble"),
+        ("longdouble", "sleef"),
+    ])
+    def test_mixed_backend_raises(self, backend_a, backend_b):
+        A = np.zeros((2, 3), dtype=QuadPrecDType(backend=backend_a))
+        B = np.zeros((3, 2), dtype=QuadPrecDType(backend=backend_b))
+        with pytest.raises((TypeError, NotImplementedError)):
+            np.matmul(A, B)
 
 
 # ================================================================================

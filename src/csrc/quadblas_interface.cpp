@@ -25,7 +25,14 @@ int
 qblas_dot(size_t n, Sleef_quad *x, size_t incx,
           Sleef_quad *y, size_t incy, Sleef_quad *result)
 {
-    if (!x || !y || !result || n == 0) {
+    if (!result) {
+        return -1;
+    }
+    if (n == 0) {
+        *result = Sleef_cast_from_doubleq1(0.0);
+        return 0;
+    }
+    if (!x || !y) {
         return -1;
     }
     *result = cblas_qdot((int)n, x, (int)incx, y, (int)incy);
@@ -38,7 +45,10 @@ qblas_gemv(char layout, char trans, size_t m, size_t n,
            Sleef_quad *x, size_t incx,
            Sleef_quad *beta, Sleef_quad *y, size_t incy)
 {
-    if (!alpha || !A || !x || !beta || !y || m == 0 || n == 0) {
+    if (m == 0 || n == 0) {
+        return 0;
+    }
+    if (!alpha || !A || !x || !beta || !y) {
         return -1;
     }
     cblas_qgemv(to_layout(layout), to_trans(trans),
@@ -56,7 +66,10 @@ qblas_gemm(char layout, char transa, char transb,
            Sleef_quad *B, size_t ldb,
            Sleef_quad *beta, Sleef_quad *C, size_t ldc)
 {
-    if (!alpha || !A || !B || !beta || !C || m == 0 || n == 0 || k == 0) {
+    if (m == 0 || n == 0 || k == 0) {
+        return 0;
+    }
+    if (!alpha || !A || !B || !beta || !C) {
         return -1;
     }
     cblas_qgemm(to_layout(layout), to_trans(transa), to_trans(transb),
