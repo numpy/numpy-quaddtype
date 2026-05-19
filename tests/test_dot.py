@@ -794,3 +794,27 @@ class TestVecdot:
         y = create_quad_array([1, 2, 3])
         with pytest.raises(ValueError):
             np.vecdot(x, y)
+
+    @pytest.mark.parametrize("shape", [
+        (0,),       # 1-D empty → scalar 0
+        (3, 0),     # 3 batches, each empty inner → (3,) zeros
+        (0, 3),     # 0 batches, non-empty inner → empty (0,)
+    ], ids=lambda s: "x".join(str(d) for d in s))
+    def test_empty_vecdot_matches_float64(self, shape):
+        dtype = QuadPrecDType(backend='sleef')
+        x_q = np.zeros(shape, dtype=dtype)
+        y_q = np.zeros(shape, dtype=dtype)
+        x_f = np.zeros(shape, dtype=np.float64)
+        y_f = np.zeros(shape, dtype=np.float64)
+
+        R_q = np.vecdot(x_q, y_q)
+        R_f = np.vecdot(x_f, y_f)
+
+        # 1-D vecdot returns a 0-d scalar QuadPrecision (no .shape attr).
+        q_shape = () if isinstance(R_q, QuadPrecision) else R_q.shape
+        assert q_shape == R_f.shape, f"shape {q_shape} != float64 {R_f.shape}"
+        assert R_q.dtype == dtype
+
+        R_q_as_f = (np.float64(R_q) if isinstance(R_q, QuadPrecision)
+                    else np.asarray(R_q).astype(np.float64))
+        assert np.array_equal(R_q_as_f, R_f), f"values {R_q_as_f!r} != {R_f!r}"
