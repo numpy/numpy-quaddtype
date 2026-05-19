@@ -245,8 +245,6 @@ QuadPrecision_int(QuadPrecisionObject *self)
         return NULL;
     }
 
-    // Python's int(float) truncates toward zero; Sleef_snprintf("%.0Qf") used
-    // by quad_to_pylong would otherwise apply round-to-nearest-even.
     Sleef_quad truncated = Sleef_truncq1(value);
     return quad_to_pylong(truncated);
 }
