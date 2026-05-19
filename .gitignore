@@ -146,3 +146,4 @@ compile_commands.json
 
 # docs
 /docs/_build/
+build_log.txt
