@@ -541,6 +541,22 @@ def test_supported_astype(dtype):
     assert back == orig
 
 
+@pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+@pytest.mark.parametrize("nan_str", ["nan", "-nan"])
+@pytest.mark.parametrize("dtype", [
+    "byte", "int8", "ubyte", "uint8",
+    "short", "int16", "ushort", "uint16",
+    "int", "int32", "uint", "uint32",
+    "long", "ulong",
+    "longlong", "int64", "ulonglong", "uint64",
+])
+def test_astype_nan_to_int_is_zero(dtype, nan_str, backend):
+    """NaN cast to any integer type must yield 0 (NumPy convention). Regression: gh-98."""
+    arr = np.array([QuadPrecision(nan_str, backend=backend)])
+    result = arr.astype(dtype)
+    assert result[0] == 0
+
+
 @pytest.mark.parametrize("dtype", ["V10", "datetime64[ms]", "timedelta64[ms]"])
 def test_unsupported_astype(dtype):
     if dtype == "V10":
@@ -1348,6 +1364,33 @@ def test_comparisons(op, a, b):
     float_b = float(b)
 
     assert op_func(quad_a, quad_b) == op_func(float_a, float_b)
+
+
+@pytest.mark.parametrize("op", ["eq", "ne", "le", "lt", "ge", "gt"])
+@pytest.mark.parametrize(
+    "quad_val, other",
+    [
+        # bool is a subclass of int — exercises PyLong_Check (regression: gh-100)
+        (1, True),
+        (0, False),
+        (1, False),
+        (0, True),
+        (2, True),
+        # np.float64 is a subclass of float — exercises PyFloat_Check
+        (1, np.float64(1.0)),
+        (1, np.float64(2.0)),
+        (0, np.float64(-0.0)),
+    ],
+)
+def test_comparisons_with_python_subclasses(op, quad_val, other):
+    op_func = getattr(operator, op)
+    quad_a = QuadPrecision(quad_val)
+    expected = op_func(float(quad_val), float(other))
+
+    # Forward: QuadPrecision OP subclass-instance
+    assert op_func(quad_a, other) == expected, f"Failed {op} between QuadPrecision({quad_val}) and {other} (type {type(other)})"
+    # Reverse: subclass-instance OP QuadPrecision
+    assert op_func(other, quad_a) == op_func(float(other), float(quad_val)), f"Failed {op} between {other} (type {type(other)}) and QuadPrecision({quad_val})"
 
 
 @pytest.mark.parametrize("op", ["eq", "ne", "le", "lt", "ge", "gt"])
@@ -2629,7 +2672,8 @@ def test_array_operations():
     # Finite % infinity cases
     (5.0, float('inf')), (-5.0, float('inf')),
     (5.0, float('-inf')), (-5.0, float('-inf')),
-    (0.0, float('inf')), (-0.0, float('-inf')),
+    (0.0, float('inf')), (-0.0, float('inf')),
+    (0.0, float('-inf')), (-0.0, float('-inf')),
 
     # NaN cases (should return NaN)
     (float('nan'), 3.0), (3.0, float('nan')), (float('nan'), float('nan')),
@@ -2674,6 +2718,7 @@ def test_mod(a, b, backend, op):
     if numpy_result == 0.0:
         numpy_sign = np.signbit(numpy_result)
         quad_sign = np.signbit(quad_result)
+        assert quad_result == 0, f"Zero mismatch for {a} % {b}: numpy={numpy_result}, quad={quad_result}"
         assert numpy_sign == quad_sign, f"Zero sign mismatch for {a} % {b}: numpy={numpy_sign}, quad={quad_sign}"
 
     # Check that non-zero results have correct sign relative to divisor
@@ -2684,6 +2729,70 @@ def test_mod(a, b, backend, op):
         numpy_negative = numpy_result < 0
 
         assert result_negative == numpy_negative, f"Sign mismatch for {a} % {b}: quad={result_negative}, numpy={numpy_negative}"
+
+
+@pytest.mark.parametrize("op", [np.mod, np.remainder])
+@pytest.mark.parametrize("a_func,a_arg,b_str", [
+    # Regression: huge dividend, finite divisor. cosh(-11357.2...) is
+    # ~1.19e+4932, so |a/b| is enormous. The old `a - floor(a/b)*b` formula
+    # lost all precision here because 0.5 ulp of the quotient corresponds
+    # to a huge absolute error. The fmod-based path avoids this.
+    ("cosh", "-11357.216553474703894801348310092223",
+     "-1.7976931345860068e+308"),
+    # Same with mismatched signs — exercises the Python-convention sign
+    # adjustment on a huge result.
+    ("cosh", "-11357.216553474703894801348310092223",
+     "1.7976931345860068e+308"),
+    # Large quotient, small divisor.
+    ("exp", "1000", "3.14159265358979323846264338327950288"),
+])
+def test_mod_high_precision_sleef(a_func, a_arg, b_str, op):
+    """Sleef backend: verified against mpmath at binary128 precision.
+
+    These inputs lie far outside f64 range, so the standard test_mod path
+    cannot exercise them — mpmath is the only viable ground truth.
+    """
+    mp.prec = 113
+    mp_a = getattr(mp, a_func)(mp.mpf(a_arg))
+    mp_b = mp.mpf(b_str)
+    # mp.fmod is Python-style (sign of divisor), matching np.mod.
+    mp_result = mp.fmod(mp_a, mp_b)
+    expected = QuadPrecision(mp.nstr(mp_result, 36))
+
+    quad_a = getattr(np, a_func)(QuadPrecision(a_arg))
+    quad_b = QuadPrecision(b_str)
+    quad_result = op(quad_a, quad_b)
+
+    assert np.isclose(quad_result, expected, rtol=1e-34, atol=0), (
+        f"sleef mismatch for {op.__name__}({a_func}({a_arg}), {b_str}): "
+        f"quad={quad_result}, expected={expected}"
+    )
+
+
+@pytest.mark.parametrize("op", [np.mod, np.remainder])
+@pytest.mark.parametrize("a_func,a_arg,b_str", [
+    ("exp", "700", "3.14159265358979323846264338327950288"),
+])
+def test_mod_high_precision_longdouble(a_func, a_arg, b_str, op):
+    """Longdouble backend: cross-checked against numpy's np.longdouble.
+
+    The backend stores a C `long double`, the same type as np.longdouble,
+    so np.mod on np.longdouble inputs is a direct same-precision reference
+    and the result should match bit-for-bit.
+    """
+    np_a = getattr(np, a_func)(np.longdouble(a_arg))
+    np_b = np.longdouble(b_str)
+    expected = op(np_a, np_b)
+
+    quad_a = getattr(np, a_func)(QuadPrecision(a_arg, backend="longdouble"))
+    quad_b = QuadPrecision(b_str, backend="longdouble")
+    quad_result = op(quad_a, quad_b)
+
+    # np.longdouble(QuadPrecision) is a lossless cast (same underlying type).
+    assert np.longdouble(quad_result) == expected, (
+        f"longdouble mismatch for {op.__name__}({a_func}({a_arg}), {b_str}): "
+        f"quad={np.longdouble(quad_result)!r}, expected={expected!r}"
+    )
 
 
 @pytest.mark.parametrize("backend", ["sleef", "longdouble"])

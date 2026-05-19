@@ -1,3 +1,9 @@
 option('disable_fma', type: 'boolean', value: false,
        description: 'Disable FMA (Fused Multiply-Add) code paths' +
                     'Set to true when building for older CPUs like Sandy Bridge that lack FMA support.')
+
+option('disable_quadblas', type: 'boolean', value: false,
+       description: 'Skip the QBLAS subproject and fall back to naive ' +
+                    'matmul kernels. Auto-enabled on Windows because ' +
+                    'QBLAS uses GCC/POSIX-only constructs that do not ' +
+                    'build under MSVC.')
