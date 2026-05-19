@@ -7,6 +7,7 @@ extern "C" {
 
 #include <Python.h>
 #include <sleef.h>
+#include <sleefquad.h>
 #include "quad_common.h"
 
 typedef struct {
@@ -25,6 +26,9 @@ QuadPrecision_from_object(PyObject *value, QuadBackendType backend);
 
 int
 init_quadprecision_scalar(void);
+
+PyObject *
+quad_to_pylong(Sleef_quad value);
 
 #ifdef __cplusplus
 }

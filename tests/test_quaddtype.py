@@ -4894,6 +4894,104 @@ class Test_Is_Integer_Methods:
         float_ratio = float_num / float_denom
         assert abs(quad_ratio - float_ratio) < 1e-15
 
+class TestIntConversion:
+    """Regression tests for issue #97: int(QuadPrecision(...)) must
+    raise on NaN/Inf, truncate toward zero, and produce arbitrary-precision
+    Python ints rather than saturating at INT64_MAX."""
+
+    # ---- NaN / Inf must raise the right exceptions ----
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_int_of_nan_raises_value_error(self, backend):
+        # Python: int(float('nan')) -> ValueError
+        with pytest.raises(ValueError, match="NaN"):
+            int(QuadPrecision("nan", backend=backend))
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("inf_str", ["inf", "-inf"])
+    def test_int_of_inf_raises_overflow_error(self, backend, inf_str):
+        # Python: int(float('inf')) -> OverflowError
+        with pytest.raises(OverflowError, match="infinity"):
+            int(QuadPrecision(inf_str, backend=backend))
+
+    # ---- Truncate toward zero (NOT floor, NOT banker's rounding) ----
+
+    @pytest.mark.parametrize("value_str,expected", [
+        ("0.0", 0),
+        ("-0.0", 0),
+        ("0.5", 0),       # Python int(0.5) == 0,  not 1 (banker's would give 0 here, coincidence)
+        ("-0.5", 0),      # Python int(-0.5) == 0, not -1
+        ("1.5", 1),       # Python int(1.5) == 1,  not 2 (banker's would give 2 — divergence)
+        ("-1.5", -1),     # Python int(-1.5) == -1, not -2 (floor would give -2)
+        ("2.5", 2),       # Python int(2.5) == 2,  banker's would give 2 (matches)
+        ("3.7", 3),
+        ("-3.7", -3),
+        ("0.9999999999999", 0),
+        ("-0.9999999999999", 0),
+        ("42.0", 42),
+        ("-42.0", -42),
+    ])
+    def test_int_truncates_toward_zero(self, value_str, expected):
+        assert int(QuadPrecision(value_str)) == expected
+        # Cross-check against Python's float for values float can represent exactly.
+        assert int(QuadPrecision(value_str)) == int(float(value_str))
+
+    # ---- Beyond int64: the original bug ----
+
+    def test_int_beyond_int64_positive(self):
+        # 2^63 = 9223372036854775808 — one past INT64_MAX. The old code returned
+        # INT64_MAX (9223372036854775807). Must now be exact.
+        n = 2**63
+        assert int(QuadPrecision(str(n))) == n
+
+    def test_int_beyond_int64_negative(self):
+        n = -(2**63) - 1   # one past INT64_MIN
+        assert int(QuadPrecision(str(n))) == n
+
+    @pytest.mark.parametrize("exponent", [40, 60, 80, 100])
+    def test_int_powers_of_two_far_above_int64(self, exponent):
+        # 2^exponent fits exactly in quad's 113-bit mantissa for exponent < 113.
+        n = 2 ** exponent
+        assert int(QuadPrecision(str(n))) == n
+
+    def test_int_int64_max_exact(self):
+        m = 2**63 - 1
+        assert int(QuadPrecision(str(m))) == m
+
+    def test_int_int64_min_exact(self):
+        m = -(2**63)
+        assert int(QuadPrecision(str(m))) == m
+
+    # ---- 1e30 from the issue ----
+
+    def test_int_1e30_not_saturated(self):
+        # The issue calls this out explicitly: int(QuadPrecision('1e30')) used to
+        # return INT64_MAX. It should now match what int(Decimal('1e30')) gives.
+        result = int(QuadPrecision("1e30"))
+        assert result == 10**30, f"got {result!r}, expected 10**30"
+
+    # ---- Return type ----
+
+    def test_int_returns_python_int(self):
+        v = int(QuadPrecision("123"))
+        assert type(v) is int
+
+    def test_int_of_huge_value_returns_python_int(self):
+        v = int(QuadPrecision("1e30"))
+        assert type(v) is int
+        assert v.bit_length() > 64   # arbitrary-precision, not a C int
+
+    # ---- Round-trip: int -> QuadPrecision -> int ----
+
+    @pytest.mark.parametrize("n", [
+        0, 1, -1, 42, -42,
+        2**31, 2**32, 2**62, 2**63, 2**63 + 1, 2**70, 2**100,
+        -(2**63), -(2**63) - 1, -(2**70),
+    ])
+    def test_int_quad_int_roundtrip(self, n):
+        assert int(QuadPrecision(str(n))) == n
+
+
 def test_quadprecision_scalar_dtype_expose():
     quad_ld = QuadPrecision("1e100", backend="longdouble")
     quad_sleef = QuadPrecision("1e100", backend="sleef")
