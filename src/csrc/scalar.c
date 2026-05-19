@@ -352,7 +352,7 @@ QuadPrecision_repr_dragon4(QuadPrecisionObject *self)
                            .sign = 1,
                            .trim_mode = TrimMode_LeaveOneZero,
                            .digits_left = 1,
-                           .exp_digits = 3};
+                           .exp_digits = 4};
 
     PyObject *str;
     if (self->backend == BACKEND_SLEEF) {
@@ -601,11 +601,63 @@ QuadPrecision_as_integer_ratio(QuadPrecisionObject *self, PyObject *Py_UNUSED(ig
     return PyTuple_Pack(2, numerator, denominator);
 }
 
+static PyObject *
+QuadPrecision_reduce(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored))
+{
+    Dragon4_Options opt = {.scientific = 1,
+                           .digit_mode = DigitMode_Unique,
+                           .cutoff_mode = CutoffMode_TotalLength,
+                           .precision = SLEEF_QUAD_DECIMAL_DIG,
+                           .sign = 1,
+                           .trim_mode = TrimMode_LeaveOneZero,
+                           .digits_left = 1,
+                           .exp_digits = 4};
+
+    PyObject *str_value;
+    if (self->backend == BACKEND_SLEEF) {
+        str_value = Dragon4_Scientific_QuadDType(&self->value.sleef_value, opt.digit_mode,
+                                                 opt.precision, opt.min_digits, opt.sign,
+                                                 opt.trim_mode, opt.digits_left, opt.exp_digits);
+    }
+    else {
+        Sleef_quad sleef_val = Sleef_cast_from_doubleq1(self->value.longdouble_value);
+        str_value = Dragon4_Scientific_QuadDType(&sleef_val, opt.digit_mode, opt.precision,
+                                                 opt.min_digits, opt.sign, opt.trim_mode,
+                                                 opt.digits_left, opt.exp_digits);
+    }
+    if (str_value == NULL) {
+        return NULL;
+    }
+
+    PyObject *backend_obj = PyUnicode_FromString(
+            self->backend == BACKEND_SLEEF ? "sleef" : "longdouble");
+    if (backend_obj == NULL) {
+        Py_DECREF(str_value);
+        return NULL;
+    }
+
+    PyObject *args = PyTuple_Pack(2, str_value, backend_obj);
+    Py_DECREF(str_value);
+    Py_DECREF(backend_obj);
+    if (args == NULL) {
+        return NULL;
+    }
+
+    PyObject *type_obj = (PyObject *)Py_TYPE(self);
+    Py_INCREF(type_obj);
+    PyObject *result = PyTuple_Pack(2, type_obj, args);
+    Py_DECREF(type_obj);
+    Py_DECREF(args);
+    return result;
+}
+
 static PyMethodDef QuadPrecision_methods[] = {
     {"is_integer", (PyCFunction)QuadPrecision_is_integer, METH_NOARGS,
      "Return True if the value is an integer."},
     {"as_integer_ratio", (PyCFunction)QuadPrecision_as_integer_ratio, METH_NOARGS,
      "Return a pair of integers whose ratio is exactly equal to the original value."},
+    {"__reduce__", (PyCFunction)QuadPrecision_reduce, METH_NOARGS,
+     "Support pickling: return (QuadPrecision, (str_value, backend))."},
     {NULL, NULL, 0, NULL}  /* Sentinel */
 };
 

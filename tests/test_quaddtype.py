@@ -5338,6 +5338,115 @@ class TestPickle:
         assert unpickled.dtype == original.dtype
         assert unpickled.flags.f_contiguous == original.flags.f_contiguous
 
+
+class TestScalarPickle:
+    """Regression tests for issue #99: bare QuadPrecision scalars (not wrapped
+    in an array) must round-trip through pickle.dumps / pickle.loads without
+    raising and must preserve value, type, and backend."""
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_issue_repro(self, backend):
+        """The exact repro from #99: was RuntimeError on loads()."""
+        import pickle
+        original = QuadPrecision("123.456", backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        assert isinstance(loaded, QuadPrecision)
+        assert loaded == original
+        assert str(loaded) == str(original)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("value", [
+        "0.0", "-0.0", "1.0", "-1.0", "42.0", "-42.0",
+        "3.141592653589793238462643383279502884197",  # ~quad-precision pi
+        "2.718281828459045235360287471352662497757",
+        "1e100", "1e-100", "-1e100", "-1e-100",
+        "1.23456789012345678901234567890e30",
+    ])
+    def test_pickle_scalar_finite_roundtrip(self, backend, value):
+        """Finite values must round-trip exactly (Dragon4-Unique is lossless)."""
+        import pickle
+        original = QuadPrecision(value, backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        assert isinstance(loaded, QuadPrecision)
+        assert loaded.dtype == QuadPrecDType(backend=backend)
+        # Exact equality: pickle/unpickle should not lose any bits.
+        assert loaded == original
+        # And the canonical repr should match.
+        assert str(loaded) == str(original)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_inf(self, backend):
+        import pickle
+        for s in ["inf", "-inf"]:
+            original = QuadPrecision(s, backend=backend)
+            loaded = pickle.loads(pickle.dumps(original))
+            assert isinstance(loaded, QuadPrecision)
+            assert loaded == original  # inf == inf, -inf == -inf
+            assert float(loaded) == float(original)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_nan(self, backend):
+        import pickle
+        original = QuadPrecision("nan", backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        assert isinstance(loaded, QuadPrecision)
+        # NaN != NaN, so we check isnan instead.
+        import math
+        assert math.isnan(float(loaded))
+        assert loaded.dtype == QuadPrecDType(backend=backend)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("protocol", [0, 1, 2, 3, 4, 5])
+    def test_pickle_scalar_all_protocols(self, backend, protocol):
+        """Round-trip must work across every pickle protocol version."""
+        import pickle
+        original = QuadPrecision("3.14159265358979323846", backend=backend)
+        data = pickle.dumps(original, protocol=protocol)
+        loaded = pickle.loads(data)
+        assert isinstance(loaded, QuadPrecision)
+        assert loaded == original
+        assert loaded.dtype == QuadPrecDType(backend=backend)
+
+    def test_pickle_scalar_preserves_type(self):
+        import pickle
+        loaded = pickle.loads(pickle.dumps(QuadPrecision("1.0")))
+        assert type(loaded) is QuadPrecision
+
+    def test_pickle_scalar_preserves_backend_across_mix(self):
+        """Each backend pickle must come back as the same backend, not silently
+        defaulting to sleef."""
+        import pickle
+        ld = QuadPrecision("1.5", backend="longdouble")
+        sl = QuadPrecision("1.5", backend="sleef")
+        ld_loaded = pickle.loads(pickle.dumps(ld))
+        sl_loaded = pickle.loads(pickle.dumps(sl))
+        assert ld_loaded.dtype == QuadPrecDType(backend="longdouble")
+        assert sl_loaded.dtype == QuadPrecDType(backend="sleef")
+
+    def test_pickle_scalar_in_list(self):
+        """Composite container of scalars also pickles cleanly."""
+        import pickle
+        original = [QuadPrecision("1.5"), QuadPrecision("2.5"),
+                    QuadPrecision("nan"), QuadPrecision("inf")]
+        loaded = pickle.loads(pickle.dumps(original))
+        import math
+        assert len(loaded) == 4
+        assert loaded[0] == original[0]
+        assert loaded[1] == original[1]
+        assert math.isnan(float(loaded[2]))
+        assert loaded[3] == original[3]
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_loads_does_not_raise(self, backend):
+        """Direct regression on the exact failure mode in the bug report
+        (RuntimeError from numpy's legacy SETITEM path)."""
+        import pickle
+        try:
+            pickle.loads(pickle.dumps(QuadPrecision("123.456", backend=backend)))
+        except RuntimeError as exc:
+            pytest.fail(f"pickle.loads raised RuntimeError: {exc}")
+
+
 @pytest.mark.parametrize("dtype", [
     "bool",
     "byte", "int8", "ubyte", "uint8",
