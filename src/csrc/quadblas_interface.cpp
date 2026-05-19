@@ -1,116 +1,74 @@
+// numpy-quaddtype shim around QBLAS.
+
 #include "quadblas_interface.h"
 #include <cstring>
 #include <algorithm>
 
 #ifndef DISABLE_QUADBLAS
-#include "quadblas/quadblas.hpp"
-#endif // DISABLE_QUADBLAS
+#include <qblas/qblas.h>
+#endif
 
 extern "C" {
 
+#ifndef DISABLE_QUADBLAS
 
-#ifndef  DISABLE_QUADBLAS
+static inline QBLAS_LAYOUT to_layout(char c) {
+    return (c == 'C' || c == 'c') ? QblasColMajor : QblasRowMajor;
+}
+static inline QBLAS_TRANSPOSE to_trans(char c) {
+    if (c == 'T' || c == 't') return QblasTrans;
+    if (c == 'C' || c == 'c') return QblasConjTrans;
+    return QblasNoTrans;
+}
 
 int
-qblas_dot(size_t n, Sleef_quad *x, size_t incx, Sleef_quad *y, size_t incy, Sleef_quad *result)
+qblas_dot(size_t n, Sleef_quad *x, size_t incx,
+          Sleef_quad *y, size_t incy, Sleef_quad *result)
 {
     if (!x || !y || !result || n == 0) {
         return -1;
     }
-
-    try {
-        *result = QuadBLAS::dot(n, x, incx, y, incy);
-        return 0;
-    }
-    catch (...) {
-        return -1;
-    }
+    *result = cblas_qdot((int)n, x, (int)incx, y, (int)incy);
+    return 0;
 }
 
 int
-qblas_gemv(char layout, char trans, size_t m, size_t n, Sleef_quad *alpha, Sleef_quad *A,
-           size_t lda, Sleef_quad *x, size_t incx, Sleef_quad *beta, Sleef_quad *y, size_t incy)
+qblas_gemv(char layout, char trans, size_t m, size_t n,
+           Sleef_quad *alpha, Sleef_quad *A, size_t lda,
+           Sleef_quad *x, size_t incx,
+           Sleef_quad *beta, Sleef_quad *y, size_t incy)
 {
     if (!alpha || !A || !x || !beta || !y || m == 0 || n == 0) {
         return -1;
     }
-
-    try {
-        // Convert layout
-        QuadBLAS::Layout qblas_layout;
-        if (layout == 'R' || layout == 'r') {
-            qblas_layout = QuadBLAS::Layout::RowMajor;
-        }
-        else if (layout == 'C' || layout == 'c') {
-            qblas_layout = QuadBLAS::Layout::ColMajor;
-        }
-        else {
-            return -1;  // Invalid layout
-        }
-
-        // Handle transpose (swap dimensions for transpose)
-        size_t actual_m = m, actual_n = n;
-        if (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c') {
-            std::swap(actual_m, actual_n);
-            // For transpose, we need to adjust the layout
-            if (qblas_layout == QuadBLAS::Layout::RowMajor) {
-                qblas_layout = QuadBLAS::Layout::ColMajor;
-            }
-            else {
-                qblas_layout = QuadBLAS::Layout::RowMajor;
-            }
-        }
-
-        // Call QBLAS GEMV
-        QuadBLAS::gemv(qblas_layout, actual_m, actual_n, *alpha, A, lda, x, incx, *beta, y, incy);
-
-        return 0;
-    }
-    catch (...) {
-        return -1;
-    }
+    cblas_qgemv(to_layout(layout), to_trans(trans),
+                (int)m, (int)n,
+                *alpha, A, (int)lda,
+                x, (int)incx,
+                *beta, y, (int)incy);
+    return 0;
 }
 
 int
-qblas_gemm(char layout, char transa, char transb, size_t m, size_t n, size_t k, Sleef_quad *alpha,
-           Sleef_quad *A, size_t lda, Sleef_quad *B, size_t ldb, Sleef_quad *beta, Sleef_quad *C,
-           size_t ldc)
+qblas_gemm(char layout, char transa, char transb,
+           size_t m, size_t n, size_t k,
+           Sleef_quad *alpha, Sleef_quad *A, size_t lda,
+           Sleef_quad *B, size_t ldb,
+           Sleef_quad *beta, Sleef_quad *C, size_t ldc)
 {
     if (!alpha || !A || !B || !beta || !C || m == 0 || n == 0 || k == 0) {
         return -1;
     }
-
-    try {
-        QuadBLAS::Layout qblas_layout;
-        if (layout == 'R' || layout == 'r') {
-            qblas_layout = QuadBLAS::Layout::RowMajor;
-        }
-        else if (layout == 'C' || layout == 'c') {
-            qblas_layout = QuadBLAS::Layout::ColMajor;
-        }
-        else {
-            return -1;  // Invalid layout
-        }
-
-        // For now, we only support no transpose
-        // TODO: Implement transpose support if needed
-        if ((transa != 'N' && transa != 'n') || (transb != 'N' && transb != 'n')) {
-            return -1;  // Transpose not implemented yet
-        }
-
-        QuadBLAS::gemm(qblas_layout, m, n, k, *alpha, A, lda, B, ldb, *beta, C, ldc);
-
-        return 0;
-    }
-    catch (...) {
-        return -1;
-    }
+    cblas_qgemm(to_layout(layout), to_trans(transa), to_trans(transb),
+                (int)m, (int)n, (int)k,
+                *alpha, A, (int)lda, B, (int)ldb,
+                *beta,  C, (int)ldc);
+    return 0;
 }
 
 int
 qblas_supports_backend(QuadBackendType backend)
 {
-    // QBLAS only supports SLEEF backend
     return (backend == BACKEND_SLEEF) ? 1 : 0;
 }
 
@@ -121,113 +79,94 @@ py_quadblas_set_num_threads(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "i", &num_threads)) {
         return NULL;
     }
-
     if (num_threads <= 0) {
         PyErr_SetString(PyExc_ValueError, "Number of threads must be positive");
         return NULL;
     }
-
-    QuadBLAS::set_num_threads(num_threads);
+    qblas_set_num_threads(num_threads);
     Py_RETURN_NONE;
 }
 
 PyObject *
 py_quadblas_get_num_threads(PyObject *self, PyObject *args)
 {
-    int num_threads = QuadBLAS::get_num_threads();
-    return PyLong_FromLong(num_threads);
+    return PyLong_FromLong(qblas_get_num_threads());
 }
 
 PyObject *
 py_quadblas_get_version(PyObject *self, PyObject *args)
 {
-    return PyUnicode_FromString("QuadBLAS 1.0.0 - High Performance Quad Precision BLAS");
+    /* qblas_get_version() returns "QBLAS X.Y.Z"; pair it with the
+     * runtime-detected SIMD tier so callers can confirm what's active. */
+    const char *ver  = qblas_get_version();
+    const char *tier = qblas_get_dispatch_tier();
+    char buf[256];
+    PyOS_snprintf(buf, sizeof buf, "%s (dispatch: %s)", ver, tier);
+    return PyUnicode_FromString(buf);
 }
 
 int
 _quadblas_set_num_threads(int num_threads)
 {
-    QuadBLAS::set_num_threads(num_threads);
+    qblas_set_num_threads(num_threads);
     return 0;
 }
 
 int
 _quadblas_get_num_threads(void)
 {
-    int num_threads = QuadBLAS::get_num_threads();
-    return num_threads;
+    return qblas_get_num_threads();
 }
 
-#else  // DISABLE_QUADBLAS
-
+#else  /* DISABLE_QUADBLAS */
 
 int
 qblas_dot(size_t n, Sleef_quad *x, size_t incx, Sleef_quad *y, size_t incy, Sleef_quad *result)
-{
-    return -1;  // QBLAS is disabled, dot product not available
-}
+{ return -1; }
 
 int
 qblas_gemv(char layout, char trans, size_t m, size_t n, Sleef_quad *alpha, Sleef_quad *A,
            size_t lda, Sleef_quad *x, size_t incx, Sleef_quad *beta, Sleef_quad *y, size_t incy)
-{
-    return -1;  // QBLAS is disabled, GEMV not available
-}
+{ return -1; }
 
 int
 qblas_gemm(char layout, char transa, char transb, size_t m, size_t n, size_t k, Sleef_quad *alpha,
            Sleef_quad *A, size_t lda, Sleef_quad *B, size_t ldb, Sleef_quad *beta, Sleef_quad *C,
            size_t ldc)
-{
-    return -1;  // QBLAS is disabled, GEMM not available
-}
+{ return -1; }
 
-int
-qblas_supports_backend(QuadBackendType backend)
-{
-    return -1; // QBLAS is disabled, backend support not available
-}
+int qblas_supports_backend(QuadBackendType backend) { return -1; }
 
 PyObject *
 py_quadblas_set_num_threads(PyObject *self, PyObject *args)
 {
-    // raise error
     PyErr_SetString(PyExc_NotImplementedError, "QuadBLAS is disabled");
     return NULL;
 }
-
 PyObject *
 py_quadblas_get_num_threads(PyObject *self, PyObject *args)
 {
-    // raise error
     PyErr_SetString(PyExc_NotImplementedError, "QuadBLAS is disabled");
     return NULL;
 }
-
 PyObject *
 py_quadblas_get_version(PyObject *self, PyObject *args)
 {
-    // raise error
     PyErr_SetString(PyExc_NotImplementedError, "QuadBLAS is disabled");
     return NULL;
 }
 
-int
-_quadblas_set_num_threads(int num_threads)
+int _quadblas_set_num_threads(int num_threads)
 {
-    // raise error
+    PyErr_SetString(PyExc_NotImplementedError, "QuadBLAS is disabled");
+    return -1;
+}
+int _quadblas_get_num_threads(void)
+{
     PyErr_SetString(PyExc_NotImplementedError, "QuadBLAS is disabled");
     return -1;
 }
 
-int
-_quadblas_get_num_threads(void)
-{
-    // raise error
-    PyErr_SetString(PyExc_NotImplementedError, "QuadBLAS is disabled");
-    return -1;
-}
+#endif /* DISABLE_QUADBLAS */
 
-#endif // DISABLE_QUADBLAS
-
-}  // extern "C"
+}  /* extern "C" */

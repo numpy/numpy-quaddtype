@@ -15,10 +15,7 @@ if is_windows
   add_project_arguments('-DWIN32', '-D_WINDOWS', language : ['c', 'cpp'])
 endif
 
-qblas_dep = dependency('qblas', fallback: ['qblas', 'qblas_dep'])
 
-# Try to find SLEEF system-wide first, fall back to subproject if not found
-# Required SLEEF version (must match sleef.wrap revision)
 required_sleef_version = '3.9.0'
 # Don't use fallback here - we need to call subproject() explicitly later with disable_fma option
 sleef_dep = dependency('sleef', version: '>=' + required_sleef_version, required: false)
@@ -30,7 +27,7 @@ if sleef_dep.found() and sleef_dep.version().startswith(required_sleef_version)
   # SLEEF found system-wide - verify quad-precision support
   cpp = meson.get_compiler('cpp')
   sleefquad_lib = cpp.find_library('sleefquad', required: false)
-  
+
   if sleefquad_lib.found()
     sleefquad_test_code = '''
     #include <sleefquad.h>
@@ -48,7 +45,7 @@ if sleef_dep.found() and sleef_dep.version().startswith(required_sleef_version)
       dependencies: [sleef_dep, sleefquad_lib],
       name: 'SLEEF quad-precision support'
     )
-    
+
     if quad_works
       sleefquad_dep = declare_dependency(
         dependencies: [sleef_dep, sleefquad_lib]
@@ -80,6 +77,23 @@ else
   message('Proceeding with vendored SLEEF subproject instead')
 endif
 
+# QBLAS does not build under MSVC (GCC-only flags, POSIX-only APIs, GCC
+# built-ins for CPUID); force-disable it on Windows. Users on other
+# platforms can opt out via -Ddisable_quadblas=true to fall back to the
+# naive matmul kernel.
+disable_quadblas = is_windows or get_option('disable_quadblas')
+if disable_quadblas
+  if is_windows
+    message('QBLAS disabled (Windows / MSVC) - using naive matmul kernel')
+  else
+    message('QBLAS disabled by user option - using naive matmul kernel')
+  endif
+  add_project_arguments('-DDISABLE_QUADBLAS', language: ['c', 'cpp'])
+  qblas_dep = declare_dependency()
+else
+  qblas_dep = dependency('qblas', fallback: ['qblas', 'qblas_dep'])
+endif
+
 incdir_numpy = run_command(py,
   ['-c', 'import numpy; print(numpy.get_include())'],
   check : true
@@ -100,12 +114,6 @@ npymath_path = incdir_numpy / '..' / 'lib'
 npymath_lib = c.find_library('npymath', dirs: npymath_path)
 
 dependencies = [py_dep, qblas_dep, sleef_dep, sleefquad_dep, npymath_lib]
-
-# Add OpenMP dependency (optional, for threading)
-openmp_dep = dependency('openmp', required: false, static: false)
-if openmp_dep.found()
-    dependencies += openmp_dep
-endif
 
 # compiler flags for QBLAS compatibility
 if not is_windows
