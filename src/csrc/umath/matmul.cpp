@@ -173,6 +173,11 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
                                     &beta, C_ptr, ldc_numpy);
                 break;
             }
+
+            default:
+                PyErr_SetString(PyExc_RuntimeError,
+                                "internal error: unknown MatmulOperationType");
+                return -1;
         }
 
         if (result != 0) {
@@ -235,6 +240,10 @@ quad_matmul_strided_loop_unaligned(PyArrayMethod_Context *context, char *const d
             temp_B_buffer = new Sleef_quad[n * p];
             temp_C_buffer = new Sleef_quad[m * p];
             break;
+        default:
+            PyErr_SetString(PyExc_RuntimeError,
+                            "internal error: unknown MatmulOperationType");
+            return -1;
     }
 
     int result = 0;
@@ -276,6 +285,12 @@ quad_matmul_strided_loop_unaligned(PyArrayMethod_Context *context, char *const d
                 }
                 break;
             }
+
+            default:
+                PyErr_SetString(PyExc_RuntimeError,
+                                "internal error: unknown MatmulOperationType");
+                result = -1;
+                break;
         }
 
         if (result != 0) {
@@ -288,7 +303,9 @@ quad_matmul_strided_loop_unaligned(PyArrayMethod_Context *context, char *const d
     delete[] temp_C_buffer;  // delete[] on nullptr is a no-op
 
     if (result != 0) {
-        PyErr_SetString(PyExc_RuntimeError, "QBLAS operation failed");
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_RuntimeError, "QBLAS operation failed");
+        }
         return -1;
     }
 
