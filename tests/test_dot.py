@@ -941,15 +941,10 @@ class TestMatmulBatched:
 
     # ---------- Non-contiguous / Fortran-order batched matrices ----------
 
-    @pytest.mark.xfail(
-        reason="F-contiguous matmul is broken even at 2D — separate pre-existing "
-               "bug in the QBLAS dispatch path (treats col-major data as row-major). "
-               "Not related to the batch-loop fix; tracked separately."
-    )
     def test_batched_fortran_order(self):
-        """F-contiguous batched arrays. Currently xfails due to a separate
-        pre-existing bug in the matmul aligned strided loop: it always passes
-        layout 'R' to qblas_gemm regardless of stride pattern."""
+        """F-contiguous batched arrays (issue #89). The matmul loop now derives
+        the QBLAS transpose flag from each operand's strides instead of always
+        passing layout 'R', so col-major data is handled correctly."""
         rng = np.random.default_rng(seed=20)
         A_f = np.asfortranarray(rng.standard_normal((3, 4, 5)))
         B_f = np.asfortranarray(rng.standard_normal((3, 5, 6)))
@@ -969,16 +964,11 @@ class TestMatmulBatched:
         B_q = _qnd(B_full_f)[::2]
         _assert_matmul_matches_float64(A_q, B_q, A_f, B_f)
 
-    @pytest.mark.xfail(
-        reason="A.swapaxes view yields a per-batch col-major matrix; same "
-               "pre-existing layout-dispatch bug as test_batched_fortran_order. "
-               "Not related to the batch-loop fix; tracked separately."
-    )
     def test_batched_transposed_view(self):
-        """A.swapaxes-based view of a 3D array as the batched matrix.
+        """A.swapaxes-based view of a 3D array as the batched matrix (issue #89).
 
-        After swapping the last two axes, each batch is col-major. Like
-        F-order arrays, this hits the same pre-existing layout-dispatch bug.
+        After swapping the last two axes, each batch is col-major; the loop now
+        passes transa='T' for it rather than mis-reading it as row-major.
         """
         rng = np.random.default_rng(seed=22)
         A_full_f = rng.standard_normal((3, 5, 4))  # shape (B, K, M)
@@ -1054,3 +1044,119 @@ class TestMatmulBatched:
         B_f = rng.standard_normal((batch, k, n))
         _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f,
                                        rtol=1e-13, atol=1e-13)
+
+
+class TestMatmulLayouts:
+    """Issue #89: matmul must give correct results for every memory layout, not
+    just row-major. Inputs are dispatched to QBLAS with the transpose flag
+    derived from each operand's strides, and non-BLAS-able operands fall back to
+    the naive loop. Every case is cross-checked against float64."""
+
+    @staticmethod
+    def _layout(a, kind):
+        if kind == "C":
+            return np.ascontiguousarray(a)
+        if kind == "F":
+            return np.asfortranarray(a)
+        if kind == "T":
+            return np.ascontiguousarray(a.T).T
+        if kind == "S":
+            big = np.zeros((a.shape[0] * 2, a.shape[1] * 2), dtype=a.dtype)
+            big[::2, ::2] = a
+            return big[::2, ::2]
+        raise ValueError(kind)
+
+    @pytest.mark.parametrize("a_kind", ["C", "F", "T", "S"])
+    @pytest.mark.parametrize("b_kind", ["C", "F", "T", "S"])
+    def test_gemm_all_layout_combinations(self, a_kind, b_kind):
+        rng = np.random.default_rng(seed=100)
+        A_f = rng.standard_normal((4, 3))
+        B_f = rng.standard_normal((3, 5))
+        A_q = self._layout(_qnd(A_f), a_kind)
+        B_q = self._layout(_qnd(B_f), b_kind)
+        _assert_matmul_matches_float64(A_q, B_q, A_f, B_f)
+
+    @pytest.mark.parametrize("out_kind", ["C", "F"])
+    def test_gemm_output_layout(self, out_kind):
+        rng = np.random.default_rng(seed=101)
+        A_f = rng.standard_normal((4, 3))
+        B_f = rng.standard_normal((3, 5))
+        A_q, B_q = _qnd(A_f), _qnd(B_f)
+        ref = A_f @ B_f
+        out = np.zeros((4, 5), dtype=QuadPrecDType())
+        if out_kind == "F":
+            out = np.asfortranarray(out)
+        np.matmul(A_q, B_q, out=out)
+        for i in range(4):
+            for j in range(5):
+                assert abs(float(out[i, j]) - ref[i, j]) <= 1e-13 + 1e-13 * max(abs(ref[i, j]), 1.0)
+
+    @pytest.mark.parametrize("a_kind", ["C", "F", "T", "S"])
+    def test_gemv_all_layouts(self, a_kind):
+        rng = np.random.default_rng(seed=102)
+        A_f = rng.standard_normal((5, 4))
+        x_f = rng.standard_normal((4,))
+        A_q = self._layout(_qnd(A_f), a_kind)
+        _assert_matmul_matches_float64(A_q, _qnd(x_f), A_f, x_f)
+
+    @pytest.mark.parametrize("stride", [2, 3])
+    def test_dot_strided_vectors(self, stride):
+        rng = np.random.default_rng(seed=103)
+        x_f = rng.standard_normal((7 * stride,))
+        y_f = rng.standard_normal((7 * stride,))
+        _assert_matmul_matches_float64(_qnd(x_f)[::stride], _qnd(y_f)[::stride],
+                                       x_f[::stride], y_f[::stride])
+
+    @pytest.mark.parametrize("A_shape,B_shape", [
+        ((0, 3), (3, 4)),
+        ((4, 0), (0, 5)),
+        ((3, 4), (4, 0)),
+    ])
+    def test_empty_core_dims_match_float64(self, A_shape, B_shape):
+        A_f = np.ones(A_shape)
+        B_f = np.ones(B_shape)
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
+
+class TestMatmulCopyPath:
+    """Issue #89 Tier 2: layouts that are not directly BLAS-able (fully strided,
+    negative strides, non-row-major output) are copied into contiguous temps and
+    still routed through QBLAS rather than the naive loop. All cross-checked
+    against float64."""
+
+    def test_fully_strided_both_inputs(self):
+        rng = np.random.default_rng(seed=200)
+        A_f = rng.standard_normal((20, 16))
+        B_f = rng.standard_normal((16, 24))
+        _assert_matmul_matches_float64(_qnd(A_f)[::2, ::2], _qnd(B_f)[::2, ::2],
+                                       A_f[::2, ::2], B_f[::2, ::2])
+
+    def test_negative_stride_input(self):
+        rng = np.random.default_rng(seed=201)
+        A_f = rng.standard_normal((6, 5))
+        B_f = rng.standard_normal((5, 7))
+        _assert_matmul_matches_float64(_qnd(A_f)[::-1], _qnd(B_f), A_f[::-1], B_f)
+
+    def test_strided_A_fortran_B_fortran_out_three_temps(self):
+        rng = np.random.default_rng(seed=202)
+        A_f = rng.standard_normal((20, 7))
+        B_f = rng.standard_normal((7, 11))
+        out = np.asfortranarray(np.zeros((10, 11), dtype=QuadPrecDType()))
+        np.matmul(_qnd(A_f)[::2], np.asfortranarray(_qnd(B_f)), out=out)
+        ref = A_f[::2] @ B_f
+        for i in range(10):
+            for j in range(11):
+                assert abs(float(out[i, j]) - ref[i, j]) <= 1e-12 + 1e-12 * max(abs(ref[i, j]), 1.0)
+
+    def test_gemv_fully_strided_matrix(self):
+        rng = np.random.default_rng(seed=203)
+        A_f = rng.standard_normal((12, 10))
+        x_f = rng.standard_normal((10,))
+        _assert_matmul_matches_float64(_qnd(A_f)[::2, ::2], _qnd(x_f)[:5],
+                                       A_f[::2, ::2], x_f[:5])
+
+    def test_gemv_negative_stride_vector(self):
+        rng = np.random.default_rng(seed=204)
+        A_f = rng.standard_normal((5, 6))
+        x_f = rng.standard_normal((6,))
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(x_f)[::-1], A_f, x_f[::-1])

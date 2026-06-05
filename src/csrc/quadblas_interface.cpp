@@ -46,6 +46,15 @@ qblas_gemv(char layout, char trans, size_t m, size_t n,
            Sleef_quad *beta, Sleef_quad *y, size_t incy)
 {
     if (m == 0 || n == 0) {
+        if (y && beta) {
+            int do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
+            size_t y_len = do_trans ? n : m;
+            Sleef_quad zero = Sleef_cast_from_doubleq1(0.0);
+            int beta_zero = Sleef_icmpeqq1(*beta, zero);
+            for (size_t i = 0; i < y_len; i++) {
+                y[i * incy] = beta_zero ? zero : Sleef_mulq1_u05(*beta, y[i * incy]);
+            }
+        }
         return 0;
     }
     if (!alpha || !A || !x || !beta || !y) {
@@ -66,7 +75,7 @@ qblas_gemm(char layout, char transa, char transb,
            Sleef_quad *B, size_t ldb,
            Sleef_quad *beta, Sleef_quad *C, size_t ldc)
 {
-    if (m == 0 || n == 0 || k == 0) {
+    if (m == 0 || n == 0) {
         return 0;
     }
     if (!alpha || !A || !B || !beta || !C) {
