@@ -3,9 +3,10 @@
 #define NPY_TARGET_VERSION NPY_2_4_API_VERSION
 #define NO_IMPORT_ARRAY
 
+#include <cmath>
+
 extern "C" {
 #include <Python.h>
-#include <math.h>
 
 #include "numpy/arrayobject.h"
 #include "numpy/ndarraytypes.h"
@@ -243,12 +244,12 @@ QuadPrecision_int(QuadPrecisionObject *self)
     }
 
     long double value = self->value.longdouble_value;
-    if(isnanl(value))
+    if(std::isnan(value))
     {
       PyErr_SetString(PyExc_ValueError, "cannot convert float NaN to integer");
       return NULL;
     }
-    if(isinfl(value))
+    if(std::isinf(value))
     {
       PyErr_SetString(PyExc_OverflowError, "cannot convert float infinity to integer");
       return NULL;

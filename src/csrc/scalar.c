@@ -513,7 +513,7 @@ PyObject* longdouble_to_pylong(long double value)
 static Sleef_quad
 longdouble_to_quad(long double value)
 {
-  if (isnanl(value) || isinfl(value) || value == 0.0L)
+  if (isnan(value) || isinf(value) || value == 0.0L)
     return Sleef_cast_from_doubleq1((double)value);
   
   int exp;
