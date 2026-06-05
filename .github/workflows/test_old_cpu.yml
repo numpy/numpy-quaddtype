@@ -39,7 +39,7 @@ jobs:
 
       - name: Install Intel SDE
         run: |
-          curl -fSL -o /tmp/sde.tar.xz https://downloadmirror.intel.com/915934/sde-external-10.8.0-2026-03-15-lin.tar.xz
+          curl -fSL -o /tmp/sde.tar.xz https://github.com/nihui/ncnn-assets/releases/download/toolchain/sde-external-10.8.0-2026-03-15-lin.tar.xz
           mkdir /tmp/sde && tar -xvf /tmp/sde.tar.xz -C /tmp/sde/
           sudo mv /tmp/sde/* /opt/sde && sudo ln -s /opt/sde/sde64 /usr/bin/sde
 
