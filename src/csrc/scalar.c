@@ -2,6 +2,7 @@
 #include <sleef.h>
 #include <sleefquad.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define PY_ARRAY_UNIQUE_SYMBOL QuadPrecType_ARRAY_API
 #define NPY_NO_DEPRECATED_API NPY_2_0_API_VERSION

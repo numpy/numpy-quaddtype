@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <Python.h>
+#include <math.h>
 
 #include "numpy/arrayobject.h"
 #include "numpy/ndarraytypes.h"
