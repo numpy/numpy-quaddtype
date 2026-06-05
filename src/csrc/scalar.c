@@ -2,6 +2,7 @@
 #include <sleef.h>
 #include <sleefquad.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define PY_ARRAY_UNIQUE_SYMBOL QuadPrecType_ARRAY_API
 #define NPY_NO_DEPRECATED_API NPY_2_0_API_VERSION
@@ -19,6 +20,11 @@
 #include "utilities.h"
 #include "constants.hpp"
 #include "pythoncapi_compat.h"
+
+
+// forward declaration
+static Sleef_quad
+longdouble_to_quad(long double value);
 
 
 QuadPrecisionObject *
@@ -430,8 +436,7 @@ QuadPrecision_is_integer(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored)
         value = self->value.sleef_value;
     }
     else {
-        // lets also tackle ld from sleef functions as well
-        value = Sleef_cast_from_doubleq1((double)self->value.longdouble_value);
+        value = longdouble_to_quad(self->value.longdouble_value); 
     }
     
     if(Sleef_iunordq1(value, value)) {
@@ -449,9 +454,7 @@ QuadPrecision_is_integer(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored)
     
     // Check if value equals its truncated version
     Sleef_quad truncated = Sleef_truncq1(value);
-    int32_t is_equal = Sleef_icmpeqq1(value, truncated);
-    
-    if (is_equal) {
+              if (Sleef_icmpeqq1(value, truncated)) {
         Py_RETURN_TRUE;
     }
     else {
@@ -461,7 +464,7 @@ QuadPrecision_is_integer(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored)
 
 PyObject* quad_to_pylong(Sleef_quad value)
 {
-    char buffer[128];
+    char buffer[4936]; // 4933 + sign + null terminator, enough for 128-bit integer in decimal
 
     // Sleef_snprintf call is thread-unsafe
     LOCK_SLEEF;
@@ -479,6 +482,37 @@ PyObject* quad_to_pylong(Sleef_quad value)
     return result;
 }
 
+PyObject* longdouble_to_pylong(long double value)
+{
+  char buffer[4936]; // 4933 + sign + null terminator, enough for 128-bit integer in decimal
+
+  // POSIX guarantees thread-safety of snprintf
+  int written = snprintf(buffer, sizeof(buffer), "%.0Lf", value);
+  if (written < 0 || written >= sizeof(buffer)) {
+    PyErr_SetString(PyExc_RuntimeError, "Failed to convert long double to string");
+    return NULL;
+  }
+
+  // Already raises ValueError and returns NULL on failure
+  return PyLong_FromString(buffer, NULL, 10);
+}
+
+static Sleef_quad
+longdouble_to_quad(long double value)
+{
+  if (isnan(value) || isinf(value) || value == 0.0L)
+    return Sleef_cast_from_doubleq1((double)value);
+  
+  int exp;
+  long double mantissa = frexpl(value, &exp);
+  long double scaled = ldexpl(mantissa, 64);
+  exp -= 64;
+  Sleef_quad q = (scaled < 0) 
+    ? Sleef_negq1(Sleef_cast_from_uint64q1((uint64_t)(-scaled))) 
+    : Sleef_cast_from_uint64q1((uint64_t)scaled);
+  return Sleef_ldexpq1(q, exp);
+}
+
 // inspired by the CPython implementation
 // https://github.com/python/cpython/blob/ac1ffd77858b62d169a08040c08aa5de26e145ac/Objects/floatobject.c#L1503C1-L1572C2
 static PyObject *
@@ -491,10 +525,8 @@ QuadPrecision_as_integer_ratio(QuadPrecisionObject *self, PyObject *Py_UNUSED(ig
     
     if (self->backend == BACKEND_SLEEF) {
         value = self->value.sleef_value;
-    }
-    else {
-        // lets also tackle ld from sleef functions as well
-        value = Sleef_cast_from_doubleq1((double)self->value.longdouble_value);
+    } else {
+        value = longdouble_to_quad(self->value.longdouble_value);
     }
     
     if(Sleef_iunordq1(value, value)) {
@@ -697,7 +729,7 @@ QuadPrecision_hash(QuadPrecisionObject *self)
         value = self->value.sleef_value;
     }
     else {
-        value = Sleef_cast_from_doubleq1((double)self->value.longdouble_value);
+        value = longdouble_to_quad(self->value.longdouble_value);
     }
     
     // Check for NaN - use pointer hash (each NaN instance gets unique hash)

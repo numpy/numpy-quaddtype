@@ -96,3 +96,11 @@ def arrays_equal_with_nan(a, b, rtol=1e-15, atol=1e-15):
                 return False
     
     return True
+
+
+def _qnd(arr_float64):
+    """Convert an arbitrary-rank float64 numpy array into a QuadPrecision array."""
+    dt = QuadPrecDType(backend='sleef')
+    flat = [QuadPrecision(repr(float(v)), backend='sleef')
+            for v in arr_float64.ravel().tolist()]
+    return np.array(flat, dtype=dt).reshape(arr_float64.shape)
