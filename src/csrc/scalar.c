@@ -330,21 +330,6 @@ QuadPrecision_str_dragon4(QuadPrecisionObject *self)
 }
 
 static PyObject *
-QuadPrecision_str(QuadPrecisionObject *self)
-// This is just define here for debugging, we actually use QuadPrecision_str_dragon4 for __str__ method.
-{
-    char buffer[128];
-    if (self->backend == BACKEND_SLEEF) {
-        Sleef_snprintf(buffer, sizeof(buffer), "%.*Qe", SLEEF_QUAD_DIG, self->value.sleef_value);
-    }
-    else {
-        snprintf(buffer, sizeof(buffer), "%.*Le", LDBL_DECIMAL_DIG - 1,
-                 self->value.longdouble_value);
-    }
-    return PyUnicode_FromString(buffer);
-}
-
-static PyObject *
 QuadPrecision_repr_dragon4(QuadPrecisionObject *self)
 {
     Dragon4_Options opt = {.scientific = 1,

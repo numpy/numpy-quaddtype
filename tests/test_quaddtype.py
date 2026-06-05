@@ -5379,7 +5379,6 @@ class TestScalarPickle:
 
     @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
     def test_pickle_scalar_issue_repro(self, backend):
-        """The exact repro from #99: was RuntimeError on loads()."""
         import pickle
         original = QuadPrecision("123.456", backend=backend)
         loaded = pickle.loads(pickle.dumps(original))
@@ -5402,9 +5401,7 @@ class TestScalarPickle:
         loaded = pickle.loads(pickle.dumps(original))
         assert isinstance(loaded, QuadPrecision)
         assert loaded.dtype == QuadPrecDType(backend=backend)
-        # Exact equality: pickle/unpickle should not lose any bits.
         assert loaded == original
-        # And the canonical repr should match.
         assert str(loaded) == str(original)
 
     @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
@@ -5414,7 +5411,7 @@ class TestScalarPickle:
             original = QuadPrecision(s, backend=backend)
             loaded = pickle.loads(pickle.dumps(original))
             assert isinstance(loaded, QuadPrecision)
-            assert loaded == original  # inf == inf, -inf == -inf
+            assert loaded == original
             assert float(loaded) == float(original)
 
     @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
@@ -5423,7 +5420,6 @@ class TestScalarPickle:
         original = QuadPrecision("nan", backend=backend)
         loaded = pickle.loads(pickle.dumps(original))
         assert isinstance(loaded, QuadPrecision)
-        # NaN != NaN, so we check isnan instead.
         import math
         assert math.isnan(float(loaded))
         assert loaded.dtype == QuadPrecDType(backend=backend)
@@ -5447,13 +5443,9 @@ class TestScalarPickle:
 
     @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
     def test_pickle_scalar_preserves_full_precision(self, backend):
-        """Diagnostic precision-loss test. Two values with the same printed
-        repr can still differ at the full bit width, so check via subtraction
-        (which preserves precision) — `loaded - original` must be exactly zero.
-        Catches the regression where the longdouble path went through (double)."""
+        """Compare via subtraction, not repr: two values with the same printed
+        repr can still differ at the full bit width."""
         import pickle
-        # A value with more than 16 significant digits — exercises precision
-        # beyond what double can represent.
         original = QuadPrecision("3.14159265358979323846264338327950288",
                                  backend=backend)
         loaded = pickle.loads(pickle.dumps(original))
@@ -5486,16 +5478,6 @@ class TestScalarPickle:
         assert loaded[1] == original[1]
         assert math.isnan(float(loaded[2]))
         assert loaded[3] == original[3]
-
-    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
-    def test_pickle_scalar_loads_does_not_raise(self, backend):
-        """Direct regression on the exact failure mode in the bug report
-        (RuntimeError from numpy's legacy SETITEM path)."""
-        import pickle
-        try:
-            pickle.loads(pickle.dumps(QuadPrecision("123.456", backend=backend)))
-        except RuntimeError as exc:
-            pytest.fail(f"pickle.loads raised RuntimeError: {exc}")
 
 
 @pytest.mark.parametrize("dtype", [
