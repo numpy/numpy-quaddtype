@@ -39,8 +39,15 @@ jobs:
 
       - name: Install Intel SDE
         run: |
-          curl -o /tmp/sde.tar.xz https://downloadmirror.intel.com/859732/sde-external-9.58.0-2025-06-16-lin.tar.xz
-          mkdir /tmp/sde && tar -xvf /tmp/sde.tar.xz -C /tmp/sde/
+          URL="https://downloadmirror.intel.com/859732/sde-external-9.58.0-2025-06-16-lin.tar.xz"
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          for i in $(seq 1 10); do
+            curl -fSL -A "$UA" -o /tmp/sde.tar.xz "$URL" && tar -tJf /tmp/sde.tar.xz >/dev/null 2>&1 && break
+            echo "SDE download attempt $i returned no valid archive (HTTP 202 staging); retrying in 15s..."
+            sleep 15
+          done
+          tar -tJf /tmp/sde.tar.xz >/dev/null 2>&1 || { echo "ERROR: could not download a valid SDE archive from $URL"; exit 1; }
+          mkdir /tmp/sde && tar -xf /tmp/sde.tar.xz -C /tmp/sde/
           sudo mv /tmp/sde/* /opt/sde && sudo ln -s /opt/sde/sde64 /usr/bin/sde
 
       - name: Install system dependencies
