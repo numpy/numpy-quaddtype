@@ -308,6 +308,39 @@ def test_string_roundtrip():
         )
 
 
+def test_string_roundtrip_all_powers_of_two():
+    """Every exact power of two from the smallest subnormal up to overflow must
+    round-trip through str() and repr(). Powers of two are the only values whose
+    rounding interval is asymmetric, so they are the sole trigger for Dragon4
+    margin bugs and are otherwise unreachable by random or decimal fuzzing."""
+    two = QuadPrecision("2.0", backend="sleef")
+    maxv = numpy_quaddtype.max_value
+    p = numpy_quaddtype.smallest_subnormal
+
+    str_fails = []
+    repr_fails = []
+    tested = 0
+    while True:
+        tested += 1
+        if QuadPrecision(str(p), backend="sleef") != p:
+            str_fails.append(str(p))
+        repr_inner = repr(p).split("'")[1]
+        if QuadPrecision(repr_inner, backend="sleef") != p:
+            repr_fails.append(repr(p))
+        nxt = p * two
+        if not (abs(nxt) <= maxv):
+            break
+        p = nxt
+
+    assert tested > 30000, f"expected the full power-of-two sweep, only tested {tested}"
+    assert not str_fails, (
+        f"{len(str_fails)} powers of two failed str() round-trip, e.g. {str_fails[:5]}"
+    )
+    assert not repr_fails, (
+        f"{len(repr_fails)} powers of two failed repr() round-trip, e.g. {repr_fails[:5]}"
+    )
+
+
 class TestBytesSupport:
     """Test suite for QuadPrecision bytes input support."""
     
