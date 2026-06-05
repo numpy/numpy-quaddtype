@@ -4894,20 +4894,31 @@ class Test_Is_Integer_Methods:
         float_ratio = float_num / float_denom
         assert abs(quad_ratio - float_ratio) < 1e-15
 
+BACKENDS = ["sleef", "longdouble"]
+
+EXACT_BOTH_BACKENDS = [
+    2**63 + 1,             # 9223372036854775809, one past INT64_MAX, 64-bit span
+    -(2**63) - 1,          # one past INT64_MIN
+    12345678901234567,     # 17-digit int, ~2^53.4, needs 54 bits
+    18014398509481984001,  # ~2^64, full 64-bit span
+    -18014398509481984001,
+]
+
+
 class TestIntConversion:
     """Regression tests for issue #97: int(QuadPrecision(...)) must
     raise on NaN/Inf, truncate toward zero, and produce arbitrary-precision
-    Python ints rather than saturating at INT64_MAX."""
+    Python ints rather than saturating at INT64_MAX. Exercised on both backends."""
 
     # ---- NaN / Inf must raise the right exceptions ----
 
-    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("backend", BACKENDS)
     def test_int_of_nan_raises_value_error(self, backend):
         # Python: int(float('nan')) -> ValueError
         with pytest.raises(ValueError, match="NaN"):
             int(QuadPrecision("nan", backend=backend))
 
-    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("inf_str", ["inf", "-inf"])
     def test_int_of_inf_raises_overflow_error(self, backend, inf_str):
         # Python: int(float('inf')) -> OverflowError
@@ -4916,6 +4927,7 @@ class TestIntConversion:
 
     # ---- Truncate toward zero (NOT floor, NOT banker's rounding) ----
 
+    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("value_str,expected", [
         ("0.0", 0),
         ("-0.0", 0),
@@ -4931,65 +4943,126 @@ class TestIntConversion:
         ("42.0", 42),
         ("-42.0", -42),
     ])
-    def test_int_truncates_toward_zero(self, value_str, expected):
-        assert int(QuadPrecision(value_str)) == expected
+    def test_int_truncates_toward_zero(self, backend, value_str, expected):
+        assert int(QuadPrecision(value_str, backend=backend)) == expected
         # Cross-check against Python's float for values float can represent exactly.
-        assert int(QuadPrecision(value_str)) == int(float(value_str))
+        assert int(QuadPrecision(value_str, backend=backend)) == int(float(value_str))
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    @pytest.mark.parametrize("n", EXACT_BOTH_BACKENDS)
+    def test_int_exact_when_double_would_lose_precision(self, backend, n):
+        assert int(QuadPrecision(str(n), backend=backend)) == n
 
     # ---- Beyond int64: the original bug ----
 
-    def test_int_beyond_int64_positive(self):
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_beyond_int64_positive(self, backend):
         # 2^63 = 9223372036854775808 — one past INT64_MAX. The old code returned
         # INT64_MAX (9223372036854775807). Must now be exact.
         n = 2**63
-        assert int(QuadPrecision(str(n))) == n
+        assert int(QuadPrecision(str(n), backend=backend)) == n
 
-    def test_int_beyond_int64_negative(self):
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_beyond_int64_negative(self, backend):
         n = -(2**63) - 1   # one past INT64_MIN
-        assert int(QuadPrecision(str(n))) == n
+        assert int(QuadPrecision(str(n), backend=backend)) == n
 
+    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("exponent", [40, 60, 80, 100])
-    def test_int_powers_of_two_far_above_int64(self, exponent):
-        # 2^exponent fits exactly in quad's 113-bit mantissa for exponent < 113.
+    def test_int_powers_of_two_far_above_int64(self, backend, exponent):
+        # Powers of two are exact in both the 64-bit and 113-bit mantissas.
         n = 2 ** exponent
-        assert int(QuadPrecision(str(n))) == n
+        assert int(QuadPrecision(str(n), backend=backend)) == n
 
-    def test_int_int64_max_exact(self):
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_int64_max_exact(self, backend):
         m = 2**63 - 1
-        assert int(QuadPrecision(str(m))) == m
+        assert int(QuadPrecision(str(m), backend=backend)) == m
 
-    def test_int_int64_min_exact(self):
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_int64_min_exact(self, backend):
         m = -(2**63)
-        assert int(QuadPrecision(str(m))) == m
+        assert int(QuadPrecision(str(m), backend=backend)) == m
 
     # ---- 1e30 from the issue ----
 
-    def test_int_1e30_not_saturated(self):
-        # The issue calls this out explicitly: int(QuadPrecision('1e30')) used to
-        # return INT64_MAX. It should now match what int(Decimal('1e30')) gives.
-        result = int(QuadPrecision("1e30"))
-        assert result == 10**30, f"got {result!r}, expected 10**30"
+    def test_int_1e30_sleef_exact(self):
+        # 10**30 needs 70 mantissa bits: exact in binary128, NOT in 64-bit long
+        # double. The issue calls this out: int(QuadPrecision('1e30')) used to
+        # saturate at INT64_MAX; on SLEEF it must be exactly 10**30.
+        assert int(QuadPrecision("1e30", backend="sleef")) == 10**30
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_1e30_not_saturated(self, backend):
+        # Both backends must return a ~1e30 magnitude integer, never the old
+        # INT64_MAX saturation. (longdouble rounds 1e30; we only check it is the
+        # correctly-rounded huge value, within long double's ~19-digit precision.)
+        result = int(QuadPrecision("1e30", backend=backend))
+        assert result > 2**64
+        assert abs(result - 10**30) < 10**(30 - 17)
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_huge_value_not_truncated(self, backend):
+        # int(1e1000) needs ~1001 digits. The old fixed 128-byte buffer truncated
+        # to 127 garbage digits with no error. Must now return the full exact
+        # integer of the nearest representable value.
+        result = int(QuadPrecision("1e1000", backend=backend))
+        assert len(str(result)) > 900
+        assert abs(result - 10**1000) < 10**(1000 - 17)
 
     # ---- Return type ----
 
-    def test_int_returns_python_int(self):
-        v = int(QuadPrecision("123"))
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_returns_python_int(self, backend):
+        v = int(QuadPrecision("123", backend=backend))
         assert type(v) is int
 
-    def test_int_of_huge_value_returns_python_int(self):
-        v = int(QuadPrecision("1e30"))
+    @pytest.mark.parametrize("backend", BACKENDS)
+    def test_int_of_huge_value_returns_python_int(self, backend):
+        v = int(QuadPrecision("1e30", backend=backend))
         assert type(v) is int
         assert v.bit_length() > 64   # arbitrary-precision, not a C int
 
-    # ---- Round-trip: int -> QuadPrecision -> int ----
-
+    # ---- Round-trip: int -> QuadPrecision -> int
+    @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.parametrize("n", [
         0, 1, -1, 42, -42,
         2**31, 2**32, 2**62, 2**63, 2**63 + 1, 2**70, 2**100,
         -(2**63), -(2**63) - 1, -(2**70),
     ])
-    def test_int_quad_int_roundtrip(self, n):
-        assert int(QuadPrecision(str(n))) == n
+    def test_int_quad_int_roundtrip(self, backend, n):
+        assert int(QuadPrecision(str(n), backend=backend)) == n
+
+
+class TestLongdoubleBackendExactness:
+    """Issue #97 follow-up: is_integer(), as_integer_ratio() and hash() shared the
+    same longdouble-through-double precision bug as int(). Verify all three agree
+    with the exact value on BOTH backends for integers needing >53 mantissa bits."""
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    @pytest.mark.parametrize("n", EXACT_BOTH_BACKENDS)
+    def test_is_integer_true_for_large_exact_ints(self, backend, n):
+        assert QuadPrecision(str(n), backend=backend).is_integer() is True
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    @pytest.mark.parametrize("value_str", ["42.5", "-0.5", "0.0001"])
+    def test_is_integer_false_for_non_integers(self, backend, value_str):
+        assert QuadPrecision(value_str, backend=backend).is_integer() is False
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    @pytest.mark.parametrize("n", EXACT_BOTH_BACKENDS)
+    def test_as_integer_ratio_reconstructs_large_exact_ints(self, backend, n):
+        # For an integer value the ratio is exactly n/1; n == num/den must hold
+        # exactly even without assuming the impl reduces the fraction.
+        num, den = QuadPrecision(str(n), backend=backend).as_integer_ratio()
+        assert num == n * den
+
+    @pytest.mark.parametrize("backend", BACKENDS)
+    @pytest.mark.parametrize("n", EXACT_BOTH_BACKENDS + [0, 1, -1, 42])
+    def test_hash_matches_python_int(self, backend, n):
+        # Key invariant: hash(QuadPrecision(n)) == hash(n) for integer-valued n,
+        # so a quad scalar and the equal Python int collide in dict/set lookups.
+        assert hash(QuadPrecision(str(n), backend=backend)) == hash(n)
 
 
 def test_quadprecision_scalar_dtype_expose():

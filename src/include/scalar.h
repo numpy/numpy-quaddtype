@@ -29,6 +29,8 @@ init_quadprecision_scalar(void);
 
 PyObject *
 quad_to_pylong(Sleef_quad value);
+PyObject *
+longdouble_to_pylong(long double value);
 
 #ifdef __cplusplus
 }

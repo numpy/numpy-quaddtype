@@ -224,29 +224,35 @@ QuadPrecision_float(QuadPrecisionObject *self)
 static PyObject *
 QuadPrecision_int(QuadPrecisionObject *self)
 {
-    Sleef_quad value;
-    if (self->backend == BACKEND_SLEEF) {
-        value = self->value.sleef_value;
-    }
-    else {
-        // Route the longdouble backend through quad as as_integer_ratio does;
-        // the prior `(long long)longdouble_value` cast also saturated/UBed on
-        // NaN/Inf/out-of-range.
-        value = Sleef_cast_from_doubleq1((double)self->value.longdouble_value);
-    }
-
-    if (Sleef_iunordq1(value, value)) {
+  if (self->backend == BACKEND_SLEEF) 
+  {
+      Sleef_quad value = self->value.sleef_value;
+      if (quad_isnan(&value)) {
         PyErr_SetString(PyExc_ValueError, "cannot convert float NaN to integer");
         return NULL;
     }
-    if (Sleef_icmpgeq1(Sleef_fabsq1(value), QUAD_PRECISION_INF)) {
+    if (quad_isinf(&value)) 
+    {
         PyErr_SetString(PyExc_OverflowError,
                         "cannot convert float infinity to integer");
         return NULL;
     }
+    return quad_to_pylong(Sleef_truncq1(value));
 
-    Sleef_quad truncated = Sleef_truncq1(value);
-    return quad_to_pylong(truncated);
+    }
+
+    long double value = self->value.longdouble_value;
+    if(isnanl(value))
+    {
+      PyErr_SetString(PyExc_ValueError, "cannot convert float NaN to integer");
+      return NULL;
+    }
+    if(isinfl(value))
+    {
+      PyErr_SetString(PyExc_OverflowError, "cannot convert float infinity to integer");
+      return NULL;
+    }
+    return longdouble_to_pylong(truncl(value));
 }
 
 template <binary_op_quad_def sleef_op, binary_op_longdouble_def longdouble_op>
