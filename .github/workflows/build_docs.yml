@@ -18,7 +18,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -35,7 +35,7 @@ jobs:
           cd docs/
           sphinx-build -b html . _build/html
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: "./docs/_build/html"
       - name: Deploy to GitHub Pages
