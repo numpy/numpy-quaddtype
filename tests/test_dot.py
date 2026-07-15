@@ -1058,16 +1058,14 @@ class TestMatmulLayouts:
             return np.ascontiguousarray(a)
         if kind == "F":
             return np.asfortranarray(a)
-        if kind == "T":
-            return np.ascontiguousarray(a.T).T
         if kind == "S":
             big = np.zeros((a.shape[0] * 2, a.shape[1] * 2), dtype=a.dtype)
             big[::2, ::2] = a
             return big[::2, ::2]
         raise ValueError(kind)
 
-    @pytest.mark.parametrize("a_kind", ["C", "F", "T", "S"])
-    @pytest.mark.parametrize("b_kind", ["C", "F", "T", "S"])
+    @pytest.mark.parametrize("a_kind", ["C", "F", "S"])
+    @pytest.mark.parametrize("b_kind", ["C", "F", "S"])
     def test_gemm_all_layout_combinations(self, a_kind, b_kind):
         rng = np.random.default_rng(seed=100)
         A_f = rng.standard_normal((4, 3))
@@ -1075,6 +1073,16 @@ class TestMatmulLayouts:
         A_q = self._layout(_qnd(A_f), a_kind)
         B_q = self._layout(_qnd(B_f), b_kind)
         _assert_matmul_matches_float64(A_q, B_q, A_f, B_f)
+
+    def test_transposed_view_operands(self):
+        """Genuine transposed views (``a.T``) are zero-copy views that share
+        memory with the source array, unlike the F-order *copies* produced by
+        ``np.asfortranarray``. They exercise the transa/transb BLAS dispatch on
+        col-major views."""
+        rng = np.random.default_rng(seed=104)
+        A_f = rng.standard_normal((3, 4))
+        B_f = rng.standard_normal((5, 3))
+        _assert_matmul_matches_float64(_qnd(A_f).T, _qnd(B_f).T, A_f.T, B_f.T)
 
     @pytest.mark.parametrize("out_kind", ["C", "F"])
     def test_gemm_output_layout(self, out_kind):
@@ -1091,7 +1099,7 @@ class TestMatmulLayouts:
             for j in range(5):
                 assert abs(float(out[i, j]) - ref[i, j]) <= 1e-13 + 1e-13 * max(abs(ref[i, j]), 1.0)
 
-    @pytest.mark.parametrize("a_kind", ["C", "F", "T", "S"])
+    @pytest.mark.parametrize("a_kind", ["C", "F", "S"])
     def test_gemv_all_layouts(self, a_kind):
         rng = np.random.default_rng(seed=102)
         A_f = rng.standard_normal((5, 4))
@@ -1117,6 +1125,16 @@ class TestMatmulLayouts:
         B_f = np.ones(B_shape)
         _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
 
+    def test_matmul_zero_contracted_dim(self):
+        """Contracted dimension of zero: ``(m, 0) @ (0, n)`` is the all-zeros
+        ``(m, n)`` matrix (empty sum). Matches NumPy/float64."""
+        A_f = np.zeros((4, 0))
+        B_f = np.zeros((0, 5))
+        got = np.matmul(_qnd(A_f), _qnd(B_f))
+        assert got.shape == (4, 5)
+        assert np.all(got.astype(np.float64) == 0.0)
+        _assert_matmul_matches_float64(_qnd(A_f), _qnd(B_f), A_f, B_f)
+
 
 class TestMatmulCopyPath:
     """Issue #89 Tier 2: layouts that are not directly BLAS-able (fully strided,
@@ -1136,6 +1154,13 @@ class TestMatmulCopyPath:
         A_f = rng.standard_normal((6, 5))
         B_f = rng.standard_normal((5, 7))
         _assert_matmul_matches_float64(_qnd(A_f)[::-1], _qnd(B_f), A_f[::-1], B_f)
+
+    def test_negative_column_stride_input(self):
+        rng = np.random.default_rng(seed=205)
+        A_f = rng.standard_normal((6, 5))
+        B_f = rng.standard_normal((5, 7))
+        _assert_matmul_matches_float64(_qnd(A_f)[:, ::-1], _qnd(B_f),
+                                       A_f[:, ::-1], B_f)
 
     def test_strided_A_fortran_B_fortran_out_three_temps(self):
         rng = np.random.default_rng(seed=202)
@@ -1160,3 +1185,17 @@ class TestMatmulCopyPath:
         A_f = rng.standard_normal((5, 6))
         x_f = rng.standard_normal((6,))
         _assert_matmul_matches_float64(_qnd(A_f), _qnd(x_f)[::-1], A_f, x_f[::-1])
+
+    def test_strided_out_vector(self):
+        """Strided output buffer for the gemv path: ``out`` has a column stride
+        of two elements, so QBLAS must honour ``incy`` (or the scatter fallback)
+        when writing results back."""
+        rng = np.random.default_rng(seed=206)
+        A_f = rng.standard_normal((7, 5))
+        x_f = rng.standard_normal((5,))
+        out = np.empty(14, dtype=QuadPrecDType())[::2]
+        np.matmul(_qnd(A_f), _qnd(x_f), out=out)
+        ref = A_f @ x_f
+        assert out.shape == (7,)
+        for i in range(7):
+            assert abs(float(out[i]) - ref[i]) <= 1e-13 + 1e-13 * max(abs(ref[i]), 1.0)

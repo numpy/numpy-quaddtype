@@ -61,7 +61,7 @@ qblas_gemv(char layout, char trans, size_t m, size_t n,
         }
         return 0;
     }
-    if (!alpha || !A || !x || !beta || !y) {
+    if (!alpha || !A || !x || !y) {
         return -1;
     }
     cblas_qgemv(to_layout(layout), to_trans(trans),
