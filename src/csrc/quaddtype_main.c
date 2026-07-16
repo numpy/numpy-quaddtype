@@ -68,6 +68,9 @@ get_sleef_constant(PyObject *self, PyObject *args)
 static PyMethodDef module_methods[] = {
         {"is_longdouble_128", py_is_longdouble_128, METH_NOARGS, "Check if long double is 128-bit"},
         {"get_sleef_constant", get_sleef_constant, METH_VARARGS, "Get Sleef constant by name"},
+        {"from_raw_bytes", QuadPrecision_from_raw_bytes, METH_VARARGS,
+         "Reconstruct a QuadPrecision scalar from its raw little-endian bytes "
+         "(used by pickle)."},
         {"set_num_threads", py_quadblas_set_num_threads, METH_VARARGS,
          "Set number of threads for QuadBLAS"},
         {"get_num_threads", py_quadblas_get_num_threads, METH_NOARGS,

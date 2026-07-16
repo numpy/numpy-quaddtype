@@ -9,15 +9,6 @@ extern "C" {
 #include <sleefquad.h>
 #include <stdint.h>
 #include <string.h>
-#include <float.h>
-
-/* LDBL_DECIMAL_DIG: minimum decimal digits needed for a lossless
- * long-double → string → long-double round-trip. Standard C11 constant in
- * <float.h>, but MSVC omits it. On MSVC long double is the same width as
- * double, so DBL_DECIMAL_DIG (17) is the exact correct fallback. */
-#ifndef LDBL_DECIMAL_DIG
-#  define LDBL_DECIMAL_DIG DBL_DECIMAL_DIG
-#endif
 
 // Quad precision constants using sleef_q macro
 #define QUAD_PRECISION_ZERO sleef_q(+0x0000000000000LL, 0x0000000000000000ULL, -16383)
