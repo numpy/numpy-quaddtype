@@ -24,6 +24,9 @@ QuadPrecision_raw_new(QuadBackendType backend);
 QuadPrecisionObject *
 QuadPrecision_from_object(PyObject *value, QuadBackendType backend);
 
+PyObject *
+QuadPrecision_from_raw_bytes(PyObject *module, PyObject *args);
+
 int
 init_quadprecision_scalar(void);
 
