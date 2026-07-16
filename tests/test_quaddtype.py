@@ -5689,6 +5689,73 @@ class TestScalarPickle:
         assert math.isnan(float(loaded[2]))
         assert loaded[3] == original[3]
 
+    @staticmethod
+    def _raw_bytes(q):
+        """The exact on-the-wire payload used by __reduce__ (bit pattern)."""
+        return q.__reduce__()[1][0]
+
+    def test_pickle_scalar_extreme_values_roundtrip(self):
+        """Subnormals and values near the maximum are exactly where a decimal
+        string round-trip would lose bits; the raw-bytes path must preserve
+        them exactly."""
+        import pickle
+        extremes = [
+            numpy_quaddtype.smallest_subnormal,
+            numpy_quaddtype.smallest_normal,
+            numpy_quaddtype.smallest_subnormal * QuadPrecision("13.0"),
+            numpy_quaddtype.max_value,
+            -numpy_quaddtype.max_value,
+            numpy_quaddtype.epsilon,
+        ]
+        for original in extremes:
+            loaded = pickle.loads(pickle.dumps(original))
+            assert isinstance(loaded, QuadPrecision)
+            assert self._raw_bytes(loaded) == self._raw_bytes(original)
+            assert loaded == original
+
+    def test_pickle_scalar_raw_bit_fuzz(self):
+        """Fuzz the entire 128-bit space (subnormals, inf, NaN payloads, values
+        near overflow) and assert every value survives a pickle round-trip
+        bit-for-bit. Uses the new from_raw_bytes reconstructor to synthesize
+        arbitrary bit patterns that decimal fuzzing cannot reach."""
+        import pickle
+        import random
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+
+        nbytes = len(self._raw_bytes(QuadPrecision("1.0", backend="sleef")))
+        rng = random.Random(0xC0FFEE)
+        for _ in range(4000):
+            raw = bytes(rng.randrange(256) for _ in range(nbytes))
+            original = from_raw_bytes(raw, "sleef")
+            loaded = pickle.loads(pickle.dumps(original))
+            # Compare bit patterns directly so NaNs (which are != themselves)
+            # are also checked.
+            assert self._raw_bytes(loaded) == self._raw_bytes(original)
+
+    def test_from_raw_bytes_roundtrip_matches_reduce(self):
+        """from_raw_bytes is the inverse of the __reduce__ payload for both
+        backends, including the little-endian canonicalization."""
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        for backend in ("sleef", "longdouble"):
+            original = QuadPrecision("3.14159265358979323846264338327950288",
+                                     backend=backend)
+            _, (data, be) = original.__reduce__()
+            assert be == backend
+            rebuilt = from_raw_bytes(data, backend)
+            assert self._raw_bytes(rebuilt) == self._raw_bytes(original)
+            assert rebuilt == original
+
+    def test_from_raw_bytes_rejects_wrong_length(self):
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        with pytest.raises(ValueError):
+            from_raw_bytes(b"\x00" * 3, "sleef")
+
+    def test_from_raw_bytes_rejects_bad_backend(self):
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        good = QuadPrecision("1.0", backend="sleef").__reduce__()[1][0]
+        with pytest.raises(ValueError):
+            from_raw_bytes(good, "float128")
+
 
 @pytest.mark.parametrize("dtype", [
     "bool",
