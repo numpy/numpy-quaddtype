@@ -138,42 +138,16 @@ cstring_to_quad_internal(const char *str, const char *start, QuadBackendType bac
         memcpy(temp, str, len);
         temp[len] = '\0';
         
-        // Call Sleef_strtoq with the bounded string
+        // Call Sleef_strtoq with the bounded string.
         //
-        // DEVELOPER NOTE - Sleef_strtoq decimal precision limit.
-        // The decimal branch of Sleef_strtoq is NOT correctly-rounded. It
-        // accumulates digits (n = n*10 + d) into SLEEF's triple-double "tdx"
-        // format (a 64-bit exponent + vdouble3 mantissa, ~159 mantissa bits),
-        // scales by exp10i() and rounds via cast_vq_tdx(). Only the hex (0x...)
-        // branch is exact bit-manipulation.
-        //
-        // Three different digit counts are involved - do NOT conflate them:
-        //   * ~34 = a quad's actual precision              (113 * log10(2))
-        //   * 36  = digits that GUARANTEE any quad round-trips; this is
-        //           SLEEF_QUAD_DECIMAL_DIG and the most Dragon4 (str/repr) emits
-        //   * ~48 = the tdx mantissa's raw capacity         (159 bits / log2(10))
-        //   * ~45 = the EFFECTIVE window this parser resolves correctly - a few
-        //           digits below 48 because the tdx add/mul/div/exp10i are not
-        //           perfectly rounded. Property of the parser, not of quads.
-        //
-        // ~45 is NOT a hard/coded limit: it is a soft, build-dependent threshold,
-        // and it is measured (empirical), not read from a constant. Sweeping
-        // genuine quads across the exponent range, the smallest k at which
-        // nudging a half-ULP midpoint by 10^-k gets silently dropped (rounds the
-        // wrong way) was 45 (some values tolerate 46-48). Inputs longer than the
-        // window are still read - the extra digits just stop reliably affecting
-        // the result. So if the digit that decides rounding sits at position
-        // >= ~46 - e.g. a value just above a midpoint - the result can be 1 ULP
-        // off. Concrete repro
-        // (SLEEF 3.9.0, x86): the ~46-digit-deep value near
-        // "1.99999...9997111...e0" parses to ...ffffe, not the correct ...fffff.
-        //
-        // Practical impact on quad<->string round-trips: none here. Every quad
-        // is captured by <= 36 digits, ~9 below the ~45 window, so Dragon4
-        // output re-parses exactly. BUT that ~45 is FMA-/codegen-dependent (the
-        // tdx arithmetic can lose a guard bit on some toolchains, e.g. macOS)
-        // and can shrink toward 36 - so do not rely on string parsing for
-        // exactness. Binary paths (raw bytes) are always exact.
+        // NOTE: SLEEF's decimal strtoq is only non-correctly-rounded for inputs
+        // whose *significant* digits exceed what a quad can hold (>~45); there it
+        // may be <= 1 ULP off. This is unreachable for quad<->string round-trips:
+        // every quad is exact within SLEEF_QUAD_DECIMAL_DIG (36) significant
+        // digits and Dragon4 (str/repr) emits <= 36, so re-parsing is exact. Only
+        // significant digits count - magnitude/exponent (e.g. 1e4932) is scaled
+        // separately and is fine. Pickling uses raw bytes (from_raw_bytes), which
+        // never goes through this path.
         char *sleef_endptr;
         out_value->sleef_value = Sleef_strtoq(temp, &sleef_endptr);
         free(temp);
