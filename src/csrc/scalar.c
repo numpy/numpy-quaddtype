@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <float.h>
 
 #define PY_ARRAY_UNIQUE_SYMBOL QuadPrecType_ARRAY_API
 #define NPY_NO_DEPRECATED_API NPY_2_0_API_VERSION
@@ -684,7 +685,22 @@ QuadPrecision_reduce(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored))
         return NULL;
     }
 
-    PyObject *args = PyTuple_Pack(2, data, backend_obj);
+    PyObject *args;
+    if (self->backend == BACKEND_LONGDOUBLE) {
+        // Tag longdouble payloads with the platform's LDBL_MANT_DIG
+        PyObject *fmt = PyLong_FromLong((long)LDBL_MANT_DIG);
+        if (fmt == NULL) {
+            Py_DECREF(data);
+            Py_DECREF(backend_obj);
+            Py_DECREF(reconstruct);
+            return NULL;
+        }
+        args = PyTuple_Pack(3, data, backend_obj, fmt);
+        Py_DECREF(fmt);
+    }
+    else {
+        args = PyTuple_Pack(2, data, backend_obj);
+    }
     Py_DECREF(data);
     Py_DECREF(backend_obj);
     if (args == NULL) {
@@ -703,7 +719,8 @@ QuadPrecision_from_raw_bytes(PyObject *Py_UNUSED(module), PyObject *args)
 {
     Py_buffer view;
     const char *backend_str = "sleef";
-    if (!PyArg_ParseTuple(args, "y*|s", &view, &backend_str)) {
+    int ld_format = -1;  // source LDBL_MANT_DIG for longdouble; -1 = not provided
+    if (!PyArg_ParseTuple(args, "y*|si", &view, &backend_str, &ld_format)) {
         return NULL;
     }
 
@@ -727,6 +744,17 @@ QuadPrecision_from_raw_bytes(PyObject *Py_UNUSED(module), PyObject *args)
         return NULL;
     }
 
+    if (backend == BACKEND_LONGDOUBLE && ld_format != -1 &&
+            ld_format != LDBL_MANT_DIG) {
+        PyErr_Format(PyExc_ValueError,
+                     "Cannot unpickle a 'longdouble' QuadPrecision created on a "
+                     "platform with a different long double format "
+                     "(LDBL_MANT_DIG=%d) than this one (LDBL_MANT_DIG=%d).",
+                     ld_format, (int)LDBL_MANT_DIG);
+        PyBuffer_Release(&view);
+        return NULL;
+    }
+
     QuadPrecisionObject *self = QuadPrecision_raw_new(backend);
     if (self == NULL) {
         PyBuffer_Release(&view);
@@ -746,7 +774,7 @@ static PyMethodDef QuadPrecision_methods[] = {
     {"as_integer_ratio", (PyCFunction)QuadPrecision_as_integer_ratio, METH_NOARGS,
      "Return a pair of integers whose ratio is exactly equal to the original value."},
     {"__reduce__", (PyCFunction)QuadPrecision_reduce, METH_NOARGS,
-     "Support pickling: return (from_raw_bytes, (raw_bytes, backend))."},
+     "Support pickling: return (from_raw_bytes, (raw_bytes, backend[, ld_format]))."},
     {NULL, NULL, 0, NULL}  /* Sentinel */
 };
 

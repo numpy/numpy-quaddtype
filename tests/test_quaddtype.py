@@ -5739,9 +5739,9 @@ class TestScalarPickle:
         for backend in ("sleef", "longdouble"):
             original = QuadPrecision("3.14159265358979323846264338327950288",
                                      backend=backend)
-            _, (data, be) = original.__reduce__()
-            assert be == backend
-            rebuilt = from_raw_bytes(data, backend)
+            _, reduce_args = original.__reduce__()
+            assert reduce_args[1] == backend
+            rebuilt = from_raw_bytes(*reduce_args)
             assert self._raw_bytes(rebuilt) == self._raw_bytes(original)
             assert rebuilt == original
 
@@ -5771,6 +5771,26 @@ class TestScalarPickle:
         raw2 = self._raw_bytes(QuadPrecision("1.0", backend="longdouble"))
         assert raw2[10:] == b"\x00" * 6, raw2.hex()
         assert raw2 == raw
+
+    def test_reduce_longdouble_carries_format_tag(self):
+        """longdouble __reduce__ carries a format tag (LDBL_MANT_DIG) so a
+        cross-format pickle can be rejected; sleef (always binary128) omits it."""
+        _, sl_args = QuadPrecision("1.5", backend="sleef").__reduce__()
+        _, ld_args = QuadPrecision("1.5", backend="longdouble").__reduce__()
+        assert len(sl_args) == 2 and sl_args[1] == "sleef"
+        assert len(ld_args) == 3 and ld_args[1] == "longdouble"
+        assert isinstance(ld_args[2], int)
+
+    def test_from_raw_bytes_rejects_wrong_longdouble_format(self):
+        """A longdouble payload tagged with a different platform's format must be
+        rejected, not silently reinterpreted."""
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        _, (data, be, fmt) = QuadPrecision("1.5", backend="longdouble").__reduce__()
+        with pytest.raises(ValueError):
+            from_raw_bytes(data, "longdouble", fmt + 1)
+        # The matching tag (and omitting it) still reconstruct fine.
+        assert from_raw_bytes(data, "longdouble", fmt) == QuadPrecision("1.5", backend="longdouble")
+        assert from_raw_bytes(data, "longdouble") == QuadPrecision("1.5", backend="longdouble")
 
 
 @pytest.mark.parametrize("dtype", [
