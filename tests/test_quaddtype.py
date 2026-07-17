@@ -5756,6 +5756,22 @@ class TestScalarPickle:
         with pytest.raises(ValueError):
             from_raw_bytes(good, "float128")
 
+    def test_pickle_scalar_longdouble_padding_zeroed(self):
+        """An 80-bit long double holds 10 significant bytes in a 16-byte slot;
+        the 6 padding bytes must be zero-initialized so the pickled payload is
+        deterministic and never leaks allocator garbage."""
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        raw = self._raw_bytes(QuadPrecision("1.0", backend="longdouble"))
+        if len(raw) != 16 or numpy_quaddtype.is_longdouble_128():
+            pytest.skip("no padding: long double is not 80-bit-in-16-bytes here")
+        # Poison the allocator free list with objects whose padding is 0xFF, so a
+        # reused object slot would expose garbage if raw_new didn't clear it.
+        junk = [from_raw_bytes(b"\xff" * 16, "longdouble") for _ in range(64)]
+        del junk
+        raw2 = self._raw_bytes(QuadPrecision("1.0", backend="longdouble"))
+        assert raw2[10:] == b"\x00" * 6, raw2.hex()
+        assert raw2 == raw
+
 
 @pytest.mark.parametrize("dtype", [
     "bool",
