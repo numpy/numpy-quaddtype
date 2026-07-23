@@ -42,7 +42,7 @@ QuadPrecision_raw_new(QuadBackendType backend)
         new->value.sleef_value = Sleef_cast_from_doubleq1(0.0);
     }
     else {
-        // An 80-bit long double occupies 16 bytes but writes only 10;
+        // An 80-bit long double occupies 16 bytes but writes only 10
         memset(&new->value, 0, sizeof(new->value));
         new->value.longdouble_value = 0.0L;
     }
