@@ -737,7 +737,7 @@ QuadPrecision_from_raw_bytes(PyObject *Py_UNUSED(module), PyObject *args)
     size_t expected = (backend == BACKEND_SLEEF) ? sizeof(Sleef_quad) : sizeof(long double);
     if (view.len != (Py_ssize_t)expected) {
         PyErr_Format(PyExc_ValueError,
-                     "QuadPrecision.from_raw_bytes expected %zu bytes for the '%s' "
+                     "from_raw_bytes expected %zu bytes for the '%s' "
                      "backend, got %zd",
                      expected, backend_str, view.len);
         PyBuffer_Release(&view);
