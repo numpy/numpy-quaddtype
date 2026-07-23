@@ -416,7 +416,7 @@ quad_to_string_adaptive_cstr(Sleef_quad *sleef_val, npy_intp unicode_size_chars)
     // Use scientific notation with full precision
     const char *scientific_str = Dragon4_Scientific_QuadDType_CStr(sleef_val, DigitMode_Unique,
                                         SLEEF_QUAD_DECIMAL_DIG, 0, 1,
-                                        TrimMode_LeaveOneZero, 1, 2);
+                                        TrimMode_LeaveOneZero, 1, 4);
     if (scientific_str == NULL) {
         PyErr_SetString(PyExc_RuntimeError, "Float formatting failed");
         return NULL;

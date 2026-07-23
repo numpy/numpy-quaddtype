@@ -138,7 +138,16 @@ cstring_to_quad_internal(const char *str, const char *start, QuadBackendType bac
         memcpy(temp, str, len);
         temp[len] = '\0';
         
-        // Call Sleef_strtoq with the bounded string
+        // Call Sleef_strtoq with the bounded string.
+        //
+        // NOTE: SLEEF's decimal strtoq is only non-correctly-rounded for inputs
+        // whose *significant* digits exceed what a quad can hold (>~45); there it
+        // may be <= 1 ULP off. This is unreachable for quad<->string round-trips:
+        // every quad is exact within SLEEF_QUAD_DECIMAL_DIG (36) significant
+        // digits and Dragon4 (str/repr) emits <= 36, so re-parsing is exact. Only
+        // significant digits count - magnitude/exponent (e.g. 1e4932) is scaled
+        // separately and is fine. Pickling uses raw bytes (from_raw_bytes), which
+        // never goes through this path.
         char *sleef_endptr;
         out_value->sleef_value = Sleef_strtoq(temp, &sleef_endptr);
         free(temp);

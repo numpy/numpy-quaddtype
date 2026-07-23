@@ -3,6 +3,8 @@
 #include <sleefquad.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
+#include <float.h>
 
 #define PY_ARRAY_UNIQUE_SYMBOL QuadPrecType_ARRAY_API
 #define NPY_NO_DEPRECATED_API NPY_2_0_API_VERSION
@@ -40,6 +42,8 @@ QuadPrecision_raw_new(QuadBackendType backend)
         new->value.sleef_value = Sleef_cast_from_doubleq1(0.0);
     }
     else {
+        // An 80-bit long double occupies 16 bytes but writes only 10
+        memset(&new->value, 0, sizeof(new->value));
         new->value.longdouble_value = 0.0L;
     }
     return new;
@@ -336,19 +340,6 @@ QuadPrecision_str_dragon4(QuadPrecisionObject *self)
 }
 
 static PyObject *
-QuadPrecision_str(QuadPrecisionObject *self)
-{
-    char buffer[128];
-    if (self->backend == BACKEND_SLEEF) {
-        Sleef_snprintf(buffer, sizeof(buffer), "%.*Qe", SLEEF_QUAD_DIG, self->value.sleef_value);
-    }
-    else {
-        snprintf(buffer, sizeof(buffer), "%.35Le", self->value.longdouble_value);
-    }
-    return PyUnicode_FromString(buffer);
-}
-
-static PyObject *
 QuadPrecision_repr_dragon4(QuadPrecisionObject *self)
 {
     Dragon4_Options opt = {.scientific = 1,
@@ -358,7 +349,7 @@ QuadPrecision_repr_dragon4(QuadPrecisionObject *self)
                            .sign = 1,
                            .trim_mode = TrimMode_LeaveOneZero,
                            .digits_left = 1,
-                           .exp_digits = 3};
+                           .exp_digits = 4};
 
     PyObject *str;
     if (self->backend == BACKEND_SLEEF) {
@@ -633,11 +624,157 @@ QuadPrecision_as_integer_ratio(QuadPrecisionObject *self, PyObject *Py_UNUSED(ig
     return PyTuple_Pack(2, numerator, denominator);
 }
 
+static int
+quad_host_is_big_endian(void)
+{
+    uint16_t probe = 1;
+    return ((const unsigned char *)&probe)[0] == 0;
+}
+
+
+static void
+quad_copy_canonical(unsigned char *dst, const unsigned char *src, size_t n)
+{
+    if (quad_host_is_big_endian()) {
+        for (size_t i = 0; i < n; i++) {
+            dst[i] = src[n - 1 - i];
+        }
+    }
+    else {
+        memcpy(dst, src, n);
+    }
+}
+
+
+static PyObject *
+QuadPrecision_reduce(QuadPrecisionObject *self, PyObject *Py_UNUSED(ignored))
+{
+    size_t nbytes = (self->backend == BACKEND_SLEEF)
+                            ? sizeof(self->value.sleef_value)
+                            : sizeof(self->value.longdouble_value);
+    const unsigned char *src = (self->backend == BACKEND_SLEEF)
+                                       ? (const unsigned char *)&self->value.sleef_value
+                                       : (const unsigned char *)&self->value.longdouble_value;
+
+    unsigned char raw[sizeof(quad_value)];
+    quad_copy_canonical(raw, src, nbytes);
+
+    PyObject *data = PyBytes_FromStringAndSize((const char *)raw, (Py_ssize_t)nbytes);
+    if (data == NULL) {
+        return NULL;
+    }
+
+    PyObject *backend_obj = PyUnicode_FromString(
+            self->backend == BACKEND_SLEEF ? "sleef" : "longdouble");
+    if (backend_obj == NULL) {
+        Py_DECREF(data);
+        return NULL;
+    }
+
+    PyObject *module = PyImport_ImportModule("numpy_quaddtype._quaddtype_main");
+    if (module == NULL) {
+        Py_DECREF(data);
+        Py_DECREF(backend_obj);
+        return NULL;
+    }
+    PyObject *reconstruct = PyObject_GetAttrString(module, "from_raw_bytes");
+    Py_DECREF(module);
+    if (reconstruct == NULL) {
+        Py_DECREF(data);
+        Py_DECREF(backend_obj);
+        return NULL;
+    }
+
+    PyObject *args;
+    if (self->backend == BACKEND_LONGDOUBLE) {
+        // Tag longdouble payloads with the platform's LDBL_MANT_DIG
+        PyObject *fmt = PyLong_FromLong((long)LDBL_MANT_DIG);
+        if (fmt == NULL) {
+            Py_DECREF(data);
+            Py_DECREF(backend_obj);
+            Py_DECREF(reconstruct);
+            return NULL;
+        }
+        args = PyTuple_Pack(3, data, backend_obj, fmt);
+        Py_DECREF(fmt);
+    }
+    else {
+        args = PyTuple_Pack(2, data, backend_obj);
+    }
+    Py_DECREF(data);
+    Py_DECREF(backend_obj);
+    if (args == NULL) {
+        Py_DECREF(reconstruct);
+        return NULL;
+    }
+
+    PyObject *result = PyTuple_Pack(2, reconstruct, args);
+    Py_DECREF(reconstruct);
+    Py_DECREF(args);
+    return result;
+}
+
+PyObject *
+QuadPrecision_from_raw_bytes(PyObject *Py_UNUSED(module), PyObject *args)
+{
+    Py_buffer view;
+    const char *backend_str = "sleef";
+    int ld_format = -1;  // source LDBL_MANT_DIG for longdouble; -1 = not provided
+    if (!PyArg_ParseTuple(args, "y*|si", &view, &backend_str, &ld_format)) {
+        return NULL;
+    }
+
+    QuadBackendType backend = BACKEND_SLEEF;
+    if (strcmp(backend_str, "longdouble") == 0) {
+        backend = BACKEND_LONGDOUBLE;
+    }
+    else if (strcmp(backend_str, "sleef") != 0) {
+        PyBuffer_Release(&view);
+        PyErr_SetString(PyExc_ValueError, "Invalid backend. Use 'sleef' or 'longdouble'.");
+        return NULL;
+    }
+
+    size_t expected = (backend == BACKEND_SLEEF) ? sizeof(Sleef_quad) : sizeof(long double);
+    if (view.len != (Py_ssize_t)expected) {
+        PyErr_Format(PyExc_ValueError,
+                     "from_raw_bytes expected %zu bytes for the '%s' "
+                     "backend, got %zd",
+                     expected, backend_str, view.len);
+        PyBuffer_Release(&view);
+        return NULL;
+    }
+
+    if (backend == BACKEND_LONGDOUBLE && ld_format != -1 &&
+            ld_format != LDBL_MANT_DIG) {
+        PyErr_Format(PyExc_ValueError,
+                     "Cannot unpickle a 'longdouble' QuadPrecision created on a "
+                     "platform with a different long double format "
+                     "(LDBL_MANT_DIG=%d) than this one (LDBL_MANT_DIG=%d).",
+                     ld_format, (int)LDBL_MANT_DIG);
+        PyBuffer_Release(&view);
+        return NULL;
+    }
+
+    QuadPrecisionObject *self = QuadPrecision_raw_new(backend);
+    if (self == NULL) {
+        PyBuffer_Release(&view);
+        return NULL;
+    }
+    unsigned char *dst = (backend == BACKEND_SLEEF)
+                                 ? (unsigned char *)&self->value.sleef_value
+                                 : (unsigned char *)&self->value.longdouble_value;
+    quad_copy_canonical(dst, (const unsigned char *)view.buf, expected);
+    PyBuffer_Release(&view);
+    return (PyObject *)self;
+}
+
 static PyMethodDef QuadPrecision_methods[] = {
     {"is_integer", (PyCFunction)QuadPrecision_is_integer, METH_NOARGS,
      "Return True if the value is an integer."},
     {"as_integer_ratio", (PyCFunction)QuadPrecision_as_integer_ratio, METH_NOARGS,
      "Return a pair of integers whose ratio is exactly equal to the original value."},
+    {"__reduce__", (PyCFunction)QuadPrecision_reduce, METH_NOARGS,
+     "Support pickling: return (from_raw_bytes, (raw_bytes, backend[, ld_format]))."},
     {NULL, NULL, 0, NULL}  /* Sentinel */
 };
 

@@ -308,6 +308,39 @@ def test_string_roundtrip():
         )
 
 
+def test_string_roundtrip_all_powers_of_two():
+    """Every exact power of two from the smallest subnormal up to overflow must
+    round-trip through str() and repr(). Powers of two are the only values whose
+    rounding interval is asymmetric, so they are the sole trigger for Dragon4
+    margin bugs and are otherwise unreachable by random or decimal fuzzing."""
+    two = QuadPrecision("2.0", backend="sleef")
+    maxv = numpy_quaddtype.max_value
+    p = numpy_quaddtype.smallest_subnormal
+
+    str_fails = []
+    repr_fails = []
+    tested = 0
+    while True:
+        tested += 1
+        if QuadPrecision(str(p), backend="sleef") != p:
+            str_fails.append(str(p))
+        repr_inner = repr(p).split("'")[1]
+        if QuadPrecision(repr_inner, backend="sleef") != p:
+            repr_fails.append(repr(p))
+        nxt = p * two
+        if not (abs(nxt) <= maxv):
+            break
+        p = nxt
+
+    assert tested > 30000, f"expected the full power-of-two sweep, only tested {tested}"
+    assert not str_fails, (
+        f"{len(str_fails)} powers of two failed str() round-trip, e.g. {str_fails[:5]}"
+    )
+    assert not repr_fails, (
+        f"{len(repr_fails)} powers of two failed repr() round-trip, e.g. {repr_fails[:5]}"
+    )
+
+
 class TestBytesSupport:
     """Test suite for QuadPrecision bytes input support."""
     
@@ -5547,6 +5580,218 @@ class TestPickle:
         np.testing.assert_array_equal(unpickled, original)
         assert unpickled.dtype == original.dtype
         assert unpickled.flags.f_contiguous == original.flags.f_contiguous
+
+
+class TestScalarPickle:
+    """Regression tests for issue #99: bare QuadPrecision scalars (not wrapped
+    in an array) must round-trip through pickle.dumps / pickle.loads without
+    raising and must preserve value, type, and backend."""
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_issue_repro(self, backend):
+        import pickle
+        original = QuadPrecision("123.456", backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        assert isinstance(loaded, QuadPrecision)
+        assert loaded == original
+        assert str(loaded) == str(original)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("value", [
+        "0.0", "-0.0", "1.0", "-1.0", "42.0", "-42.0",
+        "3.141592653589793238462643383279502884197",  # ~quad-precision pi
+        "2.718281828459045235360287471352662497757",
+        "1e100", "1e-100", "-1e100", "-1e-100",
+        "1.23456789012345678901234567890e30",
+    ])
+    def test_pickle_scalar_finite_roundtrip(self, backend, value):
+        """Finite values must round-trip exactly (Dragon4-Unique is lossless)."""
+        import pickle
+        original = QuadPrecision(value, backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        assert isinstance(loaded, QuadPrecision)
+        assert loaded.dtype == QuadPrecDType(backend=backend)
+        assert loaded == original
+        assert str(loaded) == str(original)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_inf(self, backend):
+        import pickle
+        for s in ["inf", "-inf"]:
+            original = QuadPrecision(s, backend=backend)
+            loaded = pickle.loads(pickle.dumps(original))
+            assert isinstance(loaded, QuadPrecision)
+            assert loaded == original
+            assert float(loaded) == float(original)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_nan(self, backend):
+        import pickle
+        original = QuadPrecision("nan", backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        assert isinstance(loaded, QuadPrecision)
+        import math
+        assert math.isnan(float(loaded))
+        assert loaded.dtype == QuadPrecDType(backend=backend)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    @pytest.mark.parametrize("protocol", [0, 1, 2, 3, 4, 5])
+    def test_pickle_scalar_all_protocols(self, backend, protocol):
+        """Round-trip must work across every pickle protocol version."""
+        import pickle
+        original = QuadPrecision("3.14159265358979323846", backend=backend)
+        data = pickle.dumps(original, protocol=protocol)
+        loaded = pickle.loads(data)
+        assert isinstance(loaded, QuadPrecision)
+        assert loaded == original
+        assert loaded.dtype == QuadPrecDType(backend=backend)
+
+    def test_pickle_scalar_preserves_type(self):
+        import pickle
+        loaded = pickle.loads(pickle.dumps(QuadPrecision("1.0")))
+        assert type(loaded) is QuadPrecision
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
+    def test_pickle_scalar_preserves_full_precision(self, backend):
+        """Compare via subtraction, not repr: two values with the same printed
+        repr can still differ at the full bit width."""
+        import pickle
+        original = QuadPrecision("3.14159265358979323846264338327950288",
+                                 backend=backend)
+        loaded = pickle.loads(pickle.dumps(original))
+        diff = loaded - original
+        assert diff == QuadPrecision("0.0", backend=backend), (
+            f"pickle round-trip lost precision on {backend}: "
+            f"loaded - original = {diff!r}"
+        )
+
+    def test_pickle_scalar_preserves_backend_across_mix(self):
+        """Each backend pickle must come back as the same backend, not silently
+        defaulting to sleef."""
+        import pickle
+        ld = QuadPrecision("1.5", backend="longdouble")
+        sl = QuadPrecision("1.5", backend="sleef")
+        ld_loaded = pickle.loads(pickle.dumps(ld))
+        sl_loaded = pickle.loads(pickle.dumps(sl))
+        assert ld_loaded.dtype == QuadPrecDType(backend="longdouble")
+        assert sl_loaded.dtype == QuadPrecDType(backend="sleef")
+
+    def test_pickle_scalar_in_list(self):
+        """Composite container of scalars also pickles cleanly."""
+        import pickle
+        original = [QuadPrecision("1.5"), QuadPrecision("2.5"),
+                    QuadPrecision("nan"), QuadPrecision("inf")]
+        loaded = pickle.loads(pickle.dumps(original))
+        import math
+        assert len(loaded) == 4
+        assert loaded[0] == original[0]
+        assert loaded[1] == original[1]
+        assert math.isnan(float(loaded[2]))
+        assert loaded[3] == original[3]
+
+    @staticmethod
+    def _raw_bytes(q):
+        """The exact on-the-wire payload used by __reduce__ (bit pattern)."""
+        return q.__reduce__()[1][0]
+
+    def test_pickle_scalar_extreme_values_roundtrip(self):
+        """Subnormals and values near the maximum are exactly where a decimal
+        string round-trip would lose bits; the raw-bytes path must preserve
+        them exactly."""
+        import pickle
+        extremes = [
+            numpy_quaddtype.smallest_subnormal,
+            numpy_quaddtype.smallest_normal,
+            numpy_quaddtype.smallest_subnormal * QuadPrecision("13.0"),
+            numpy_quaddtype.max_value,
+            -numpy_quaddtype.max_value,
+            numpy_quaddtype.epsilon,
+        ]
+        for original in extremes:
+            loaded = pickle.loads(pickle.dumps(original))
+            assert isinstance(loaded, QuadPrecision)
+            assert self._raw_bytes(loaded) == self._raw_bytes(original)
+            assert loaded == original
+
+    def test_pickle_scalar_raw_bit_fuzz(self):
+        """Fuzz the entire 128-bit space (subnormals, inf, NaN payloads, values
+        near overflow) and assert every value survives a pickle round-trip
+        bit-for-bit. Uses the new from_raw_bytes reconstructor to synthesize
+        arbitrary bit patterns that decimal fuzzing cannot reach."""
+        import pickle
+        import random
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+
+        nbytes = len(self._raw_bytes(QuadPrecision("1.0", backend="sleef")))
+        rng = random.Random(0xC0FFEE)
+        for _ in range(4000):
+            raw = bytes(rng.randrange(256) for _ in range(nbytes))
+            original = from_raw_bytes(raw, "sleef")
+            loaded = pickle.loads(pickle.dumps(original))
+            # Compare bit patterns directly so NaNs (which are != themselves)
+            # are also checked.
+            assert self._raw_bytes(loaded) == self._raw_bytes(original)
+
+    def test_from_raw_bytes_roundtrip_matches_reduce(self):
+        """from_raw_bytes is the inverse of the __reduce__ payload for both
+        backends, including the little-endian canonicalization."""
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        for backend in ("sleef", "longdouble"):
+            original = QuadPrecision("3.14159265358979323846264338327950288",
+                                     backend=backend)
+            _, reduce_args = original.__reduce__()
+            assert reduce_args[1] == backend
+            rebuilt = from_raw_bytes(*reduce_args)
+            assert self._raw_bytes(rebuilt) == self._raw_bytes(original)
+            assert rebuilt == original
+
+    def test_from_raw_bytes_rejects_wrong_length(self):
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        with pytest.raises(ValueError):
+            from_raw_bytes(b"\x00" * 3, "sleef")
+
+    def test_from_raw_bytes_rejects_bad_backend(self):
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        good = QuadPrecision("1.0", backend="sleef").__reduce__()[1][0]
+        with pytest.raises(ValueError):
+            from_raw_bytes(good, "float128")
+
+    def test_pickle_scalar_longdouble_padding_zeroed(self):
+        """An 80-bit long double holds 10 significant bytes in a 16-byte slot;
+        the 6 padding bytes must be zero-initialized so the pickled payload is
+        deterministic and never leaks allocator garbage."""
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        raw = self._raw_bytes(QuadPrecision("1.0", backend="longdouble"))
+        if len(raw) != 16 or numpy_quaddtype.is_longdouble_128():
+            pytest.skip("no padding: long double is not 80-bit-in-16-bytes here")
+        # Poison the allocator free list with objects whose padding is 0xFF, so a
+        # reused object slot would expose garbage if raw_new didn't clear it.
+        junk = [from_raw_bytes(b"\xff" * 16, "longdouble") for _ in range(64)]
+        del junk
+        raw2 = self._raw_bytes(QuadPrecision("1.0", backend="longdouble"))
+        assert raw2[10:] == b"\x00" * 6, raw2.hex()
+        assert raw2 == raw
+
+    def test_reduce_longdouble_carries_format_tag(self):
+        """longdouble __reduce__ carries a format tag (LDBL_MANT_DIG) so a
+        cross-format pickle can be rejected; sleef (always binary128) omits it."""
+        _, sl_args = QuadPrecision("1.5", backend="sleef").__reduce__()
+        _, ld_args = QuadPrecision("1.5", backend="longdouble").__reduce__()
+        assert len(sl_args) == 2 and sl_args[1] == "sleef"
+        assert len(ld_args) == 3 and ld_args[1] == "longdouble"
+        assert isinstance(ld_args[2], int)
+
+    def test_from_raw_bytes_rejects_wrong_longdouble_format(self):
+        """A longdouble payload tagged with a different platform's format must be
+        rejected, not silently reinterpreted."""
+        from numpy_quaddtype._quaddtype_main import from_raw_bytes
+        _, (data, be, fmt) = QuadPrecision("1.5", backend="longdouble").__reduce__()
+        with pytest.raises(ValueError):
+            from_raw_bytes(data, "longdouble", fmt + 1)
+        # The matching tag (and omitting it) still reconstruct fine.
+        assert from_raw_bytes(data, "longdouble", fmt) == QuadPrecision("1.5", backend="longdouble")
+        assert from_raw_bytes(data, "longdouble") == QuadPrecision("1.5", backend="longdouble")
+
 
 @pytest.mark.parametrize("dtype", [
     "bool",

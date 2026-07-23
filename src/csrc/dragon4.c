@@ -1929,7 +1929,7 @@ Dragon4_PrintFloat_Sleef_quad(Sleef_quad *value, Dragon4_Options *opt)
         /* mantissa_lo is unchanged */
         exponent = floatExponent - 16383 - 112;
         mantissaBit = 112;
-        hasUnequalMargins = (floatExponent != 1) && (mantissa_hi == 0 && mantissa_lo == 0);
+        hasUnequalMargins = (floatExponent != 1) && (mantissa_hi == (1ull << 48) && mantissa_lo == 0);
     }
     else {
         /* subnormal */
