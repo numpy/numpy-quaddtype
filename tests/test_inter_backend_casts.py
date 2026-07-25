@@ -39,10 +39,19 @@ def _as_longdouble(value, target=LONGDOUBLE):
     return value.astype(target).astype(np.longdouble)[0]
 
 
+def _as_float64(value):
+    return value.astype(np.float64)[0]
+
+
 def _assert_value_and_sign(actual, expected):
     assert actual == expected
     if actual == 0:
         assert np.signbit(actual) == np.signbit(expected)
+
+
+def _require_narrower_longdouble():
+    if LD_INFO.nmant >= 112:
+        pytest.skip("long double has the same precision as SLEEF binary128")
 
 
 @contextlib.contextmanager
@@ -72,7 +81,18 @@ def _rounding_mode(name):
     libc = ctypes.CDLL(None)
     if not hasattr(libc, "fegetround") or not hasattr(libc, "fesetround"):
         pytest.skip("floating-point environment API is unavailable")
-    values = {"nearest": 0, "down": 0x400, "up": 0x800, "zero": 0xC00}
+    libc.fegetround.restype = ctypes.c_int
+    libc.fesetround.argtypes = [ctypes.c_int]
+    libc.fesetround.restype = ctypes.c_int
+    if machine in {"aarch64", "arm64"}:
+        values = {
+            "nearest": 0,
+            "down": 0x800000,
+            "up": 0x400000,
+            "zero": 0xC00000,
+        }
+    else:
+        values = {"nearest": 0, "down": 0x400, "up": 0x800, "zero": 0xC00}
     previous = libc.fegetround()
     assert libc.fesetround(values[name]) == 0
     try:
@@ -192,6 +212,7 @@ def test_longdouble_to_sleef_random_exact_roundtrip(casting):
 
 @pytest.mark.parametrize("mode", ROUNDING_MODES)
 def test_sleef_to_longdouble_rounding_modes(mode):
+    _require_narrower_longdouble()
     one = np.array(["1"], dtype=SLEEF)
     next_up = np.nextafter(np.longdouble(1), np.longdouble(2), dtype=np.longdouble)
     next_down = np.nextafter(np.longdouble(-1), np.longdouble(-2), dtype=np.longdouble)
@@ -217,6 +238,7 @@ def test_sleef_to_longdouble_rounding_modes(mode):
 
 @pytest.mark.parametrize("mode", ROUNDING_MODES)
 def test_sleef_to_longdouble_underflow_and_overflow_modes(mode):
+    _require_narrower_longdouble()
     one = np.array(["1"], dtype=SLEEF)
     zero = np.longdouble(0)
     min_subnormal = np.nextafter(zero, np.longdouble(1), dtype=np.longdouble)
@@ -244,6 +266,97 @@ def test_sleef_to_longdouble_underflow_and_overflow_modes(mode):
         _assert_value_and_sign(result, wanted)
 
 
+@pytest.mark.parametrize("mode", ROUNDING_MODES)
+def test_sleef_to_float64_rounding_modes(mode):
+    one = np.array(["1"], dtype=SLEEF)
+    next_up = np.nextafter(np.float64(1), np.float64(2))
+    next_down = np.nextafter(np.float64(-1), np.float64(-2))
+    upper = np.array([next_up], dtype=np.float64).astype(SLEEF)
+    lower_negative = np.array([next_down], dtype=np.float64).astype(SLEEF)
+    positive_midpoint = (one + upper) / np.array(["2"], dtype=SLEEF)
+    negative_midpoint = (-one + lower_negative) / np.array(["2"], dtype=SLEEF)
+    expected = {
+        "nearest": (np.float64(1), np.float64(-1)),
+        "down": (np.float64(1), next_down),
+        "up": (next_up, np.float64(-1)),
+        "zero": (np.float64(1), np.float64(-1)),
+    }
+
+    with _rounding_mode(mode):
+        actual = (_as_float64(positive_midpoint), _as_float64(negative_midpoint))
+
+    for result, wanted in zip(actual, expected[mode], strict=True):
+        _assert_value_and_sign(result, wanted)
+
+
+@pytest.mark.parametrize("mode", ROUNDING_MODES)
+def test_sleef_to_float64_underflow_and_overflow_modes(mode):
+    info = np.finfo(np.float64)
+    precision = info.nmant + 1
+    one = np.array(["1"], dtype=SLEEF)
+    zero = np.float64(0)
+    min_subnormal = np.nextafter(zero, np.float64(1))
+    half_min_subnormal = np.ldexp(one, info.minexp - precision)
+    max_value = np.array([info.max], dtype=np.float64).astype(SLEEF)
+    overflow_midpoint = max_value + np.ldexp(one, info.maxexp - precision - 1)
+    far_overflow = np.array(["1e4000"], dtype=SLEEF)
+    expected = {
+        "nearest": (
+            zero,
+            -zero,
+            np.float64("inf"),
+            np.float64("-inf"),
+            np.float64("inf"),
+            np.float64("-inf"),
+        ),
+        "down": (
+            zero,
+            -min_subnormal,
+            info.max,
+            np.float64("-inf"),
+            info.max,
+            np.float64("-inf"),
+        ),
+        "up": (
+            min_subnormal,
+            -zero,
+            np.float64("inf"),
+            -info.max,
+            np.float64("inf"),
+            -info.max,
+        ),
+        "zero": (zero, -zero, info.max, -info.max, info.max, -info.max),
+    }
+
+    with _rounding_mode(mode), np.errstate(over="ignore", under="ignore"):
+        actual = (
+            _as_float64(half_min_subnormal),
+            _as_float64(-half_min_subnormal),
+            _as_float64(overflow_midpoint),
+            _as_float64(-overflow_midpoint),
+            _as_float64(far_overflow),
+            _as_float64(-far_overflow),
+        )
+
+    for result, wanted in zip(actual, expected[mode], strict=True):
+        _assert_value_and_sign(result, wanted)
+
+
+@pytest.mark.parametrize("exponent", [-1020, -100, -1, 0, 1, 100, 1022])
+@pytest.mark.parametrize("sign", [1, -1])
+def test_sleef_to_float64_adjacent_midpoints_across_exponents(exponent, sign):
+    value = np.ldexp(np.float64("0.75"), exponent)
+    value = value if sign > 0 else -value
+    direction = np.float64("inf") if sign > 0 else np.float64("-inf")
+    neighbor = np.nextafter(value, direction)
+    lower = np.array([value], dtype=np.float64).astype(SLEEF)
+    upper = np.array([neighbor], dtype=np.float64).astype(SLEEF)
+    midpoint = (lower + upper) / np.array(["2"], dtype=SLEEF)
+
+    assert _as_float64(np.nextafter(midpoint, lower)) == value
+    assert _as_float64(np.nextafter(midpoint, upper)) == neighbor
+
+
 @pytest.mark.parametrize(
     "exponent",
     [
@@ -258,6 +371,7 @@ def test_sleef_to_longdouble_underflow_and_overflow_modes(mode):
 )
 @pytest.mark.parametrize("sign", [1, -1])
 def test_sleef_to_longdouble_adjacent_midpoints_across_exponents(exponent, sign):
+    _require_narrower_longdouble()
     value = np.ldexp(np.longdouble("0.75"), exponent)
     value = value if sign > 0 else -value
     direction = np.longdouble("inf") if sign > 0 else np.longdouble("-inf")
