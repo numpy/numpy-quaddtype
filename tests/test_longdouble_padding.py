@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from numpy_quaddtype import QuadPrecDType, QuadPrecision
+from numpy_quaddtype._quaddtype_main import from_raw_bytes
 
 
 def x87_longdouble_dtype():
@@ -143,3 +144,16 @@ def test_fromstring_zeroes_longdouble_padding():
     assert np.isnan(result[2])
     assert np.signbit(result[2])
     assert_array_padding_zero(result)
+
+
+def test_from_raw_bytes_zeroes_longdouble_padding():
+    x87_longdouble_dtype()
+    original = QuadPrecision("1.5", backend="longdouble")
+    raw = bytearray(original.__reduce__()[1][0])
+    raw[10:] = b"\xa5" * 6
+
+    result = from_raw_bytes(bytes(raw), "longdouble")
+    result_raw = result.__reduce__()[1][0]
+
+    assert result == original
+    assert result_raw[10:] == b"\x00" * 6

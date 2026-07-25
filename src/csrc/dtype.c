@@ -143,7 +143,7 @@ quadprec_getitem(QuadPrecDTypeObject *descr, char *dataptr)
     if (!new) {
         return NULL;
     }
-    quad_value_load(&new->value, dataptr, descr->backend);
+    quad_value_load_canonical(&new->value, dataptr, descr->backend);
     return (PyObject *)new;
 }
 

@@ -759,10 +759,16 @@ QuadPrecision_from_raw_bytes(PyObject *Py_UNUSED(module), PyObject *args)
         PyBuffer_Release(&view);
         return NULL;
     }
-    unsigned char *dst = (backend == BACKEND_SLEEF)
-                                 ? (unsigned char *)&self->value.sleef_value
-                                 : (unsigned char *)&self->value.longdouble_value;
-    quad_copy_canonical(dst, (const unsigned char *)view.buf, expected);
+    unsigned char raw[sizeof(quad_value)];
+    quad_copy_canonical(raw, (const unsigned char *)view.buf, expected);
+    if (backend == BACKEND_SLEEF) {
+        memcpy(&self->value.sleef_value, raw, expected);
+    }
+    else {
+        long double value;
+        memcpy(&value, raw, expected);
+        quad_value_set_longdouble(&self->value, value);
+    }
     PyBuffer_Release(&view);
     return (PyObject *)self;
 }
