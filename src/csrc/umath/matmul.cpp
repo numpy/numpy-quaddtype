@@ -470,7 +470,7 @@ naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
                         sum += a_val * b_val;
                     }
 
-                    memcpy(C_ij, &sum, sizeof(long double));
+                    quad_longdouble_store(C_ij, sum);
                 }
             }
         }

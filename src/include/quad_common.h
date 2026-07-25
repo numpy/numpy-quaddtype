@@ -7,6 +7,8 @@ extern "C" {
 
 #include <sleef.h>
 #include <sleefquad.h>
+#include <stddef.h>
+#include <string.h>
 
 typedef enum {
     BACKEND_INVALID = -1,
@@ -19,6 +21,54 @@ typedef union {
     long double longdouble_value;
 } quad_value;
 
+static inline void
+quad_value_zero(quad_value *value)
+{
+    // Prevent the compiler from eliding writes to long double padding bytes.
+    volatile unsigned char *bytes = (volatile unsigned char *)value;
+    for (size_t i = 0; i < sizeof(*value); i++) {
+        bytes[i] = 0;
+    }
+}
+
+static inline void
+quad_value_set_longdouble(quad_value *value, long double input)
+{
+    quad_value_zero(value);
+    value->longdouble_value = input;
+}
+
+static inline void
+quad_value_load(quad_value *value, const void *src, QuadBackendType backend)
+{
+    if (backend == BACKEND_SLEEF) {
+        memcpy(&value->sleef_value, src, sizeof(value->sleef_value));
+    }
+    else {
+        long double input;
+        memcpy(&input, src, sizeof(input));
+        quad_value_set_longdouble(value, input);
+    }
+}
+
+static inline void
+quad_longdouble_store(void *dst, long double value)
+{
+    quad_value canonical;
+    quad_value_set_longdouble(&canonical, value);
+    memcpy(dst, &canonical, sizeof(canonical.longdouble_value));
+}
+
+static inline void
+quad_value_store(void *dst, const quad_value *value, QuadBackendType backend)
+{
+    if (backend == BACKEND_SLEEF) {
+        memcpy(dst, &value->sleef_value, sizeof(value->sleef_value));
+    }
+    else {
+        quad_longdouble_store(dst, value->longdouble_value);
+    }
+}
 
 // For IEEE 754 binary128 (quad precision), we need 36 decimal digits 
 // to guarantee round-trip conversion (string -> parse -> equals original value)

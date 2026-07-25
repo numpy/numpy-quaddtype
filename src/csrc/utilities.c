@@ -158,7 +158,7 @@ cstring_to_quad_internal(const char *str, const char *start, QuadBackendType bac
         }
         
     } else {
-        out_value->longdouble_value = strtold(str, endptr);
+        quad_value_set_longdouble(out_value, strtold(str, endptr));
     }
     
     if (endptr && *endptr == str) {
@@ -218,7 +218,8 @@ NumPyOS_ascii_strtoq(const char *s, QuadBackendType backend, quad_value *out_val
             out_value->sleef_value = sign > 0 ? QUAD_PRECISION_INF : QUAD_PRECISION_NINF;
         }
         else {
-            out_value->longdouble_value = sign > 0 ? strtold("inf", NULL) : strtold("-inf", NULL);
+            quad_value_set_longdouble(out_value,
+                                      sign > 0 ? strtold("inf", NULL) : strtold("-inf", NULL));
         }
         
         if (endptr) {
@@ -252,7 +253,7 @@ NumPyOS_ascii_strtoq(const char *s, QuadBackendType backend, quad_value *out_val
             out_value->sleef_value = nan_val;
         }
         else {
-            out_value->longdouble_value = sign < 0 ? -nanl("") : nanl("");
+            quad_value_set_longdouble(out_value, sign < 0 ? -nanl("") : nanl(""));
         }
         
         if (endptr) {

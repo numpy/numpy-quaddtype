@@ -43,8 +43,7 @@ QuadPrecision_raw_new(QuadBackendType backend)
     }
     else {
         // An 80-bit long double occupies 16 bytes but writes only 10
-        memset(&new->value, 0, sizeof(new->value));
-        new->value.longdouble_value = 0.0L;
+        quad_value_set_longdouble(&new->value, 0.0L);
     }
     return new;
 }
