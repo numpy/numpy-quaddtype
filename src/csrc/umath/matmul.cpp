@@ -534,7 +534,10 @@ init_matmul_ops(PyObject *numpy)
     }
 
     if (PyUFunc_AddPromoter(ufunc, DTypes, promoter_capsule) < 0) {
-        PyErr_Clear();
+        Py_DECREF(promoter_capsule);
+        Py_DECREF(DTypes);
+        Py_DECREF(ufunc);
+        return -1;
     }
     Py_DECREF(DTypes);
 
@@ -547,11 +550,15 @@ init_matmul_ops(PyObject *numpy)
     }
 
     if (PyUFunc_AddPromoter(ufunc, DTypes, promoter_capsule) < 0) {
-        PyErr_Clear();
+        Py_DECREF(promoter_capsule);
+        Py_DECREF(DTypes);
+        Py_DECREF(ufunc);
+        return -1;
     }
     Py_DECREF(DTypes);
 
     Py_DECREF(promoter_capsule);
+
     Py_DECREF(ufunc);
 
     return 0;

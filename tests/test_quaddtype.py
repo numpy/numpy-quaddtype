@@ -6511,6 +6511,131 @@ class TestPromoterNoInterference:
         assert r.dtype == np.float64
 
 
+class TestObjectPromotion:
+    @pytest.fixture
+    def backend(self, request):
+        return request.param
+
+    @pytest.fixture
+    def operands(self, backend):
+        quad = np.array([1, 2], dtype=QuadPrecDType(backend=backend))
+        objects = np.array([3, 4], dtype=object)
+        return quad, objects
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("op", [np.add, np.multiply])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_arithmetic_uses_object_loop(self, operands, op, reverse):
+        quad, objects = operands
+        left, right = (objects, quad) if reverse else (quad, objects)
+
+        result = op(left, right)
+        expected = op(left.astype(object), right.astype(object))
+
+        assert result.dtype == np.dtype(object)
+        np.testing.assert_array_equal(result, expected, strict=True)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("op", [np.equal, np.less])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_comparison_uses_object_loop(self, operands, op, reverse):
+        quad, objects = operands
+        left, right = (objects, quad) if reverse else (quad, objects)
+
+        result = op(left, right)
+        expected = op(left.astype(object), right.astype(object))
+
+        assert result.dtype == np.dtype(np.bool_)
+        np.testing.assert_array_equal(result, expected, strict=True)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("op", [np.logical_and, np.logical_or])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_logical_uses_object_loop(self, operands, op, reverse):
+        quad, objects = operands
+        left, right = (objects, quad) if reverse else (quad, objects)
+
+        result = op(left, right)
+        expected = op(left.astype(object), right.astype(object))
+
+        assert result.dtype == np.dtype(object)
+        np.testing.assert_array_equal(result, expected, strict=True)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_logical_xor_matches_unsupported_object_loop(self, operands, reverse):
+        quad, objects = operands
+        left, right = (objects, quad) if reverse else (quad, objects)
+
+        with pytest.raises(AttributeError):
+            np.logical_xor(left.astype(object), right.astype(object))
+        with pytest.raises(AttributeError):
+            np.logical_xor(left, right)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_broadcasting_and_masked_out_use_object_loop(self, backend, reverse):
+        quad = np.array([[1], [2]], dtype=QuadPrecDType(backend=backend))
+        objects = np.array([[3, 4, 5]], dtype=object)
+        left, right = (objects, quad) if reverse else (quad, objects)
+        where = np.array([[True, False, True], [False, True, False]])
+        out = np.full((2, 3), "unchanged", dtype=object)
+        expected = out.copy()
+
+        np.add(left, right, out=out, where=where)
+        np.add(left.astype(object), right.astype(object), out=expected, where=where)
+
+        np.testing.assert_array_equal(out, expected, strict=True)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_divmod_without_object_loop_still_raises(self, operands, reverse):
+        quad, objects = operands
+        left, right = (objects, quad) if reverse else (quad, objects)
+
+        with pytest.raises(TypeError):
+            np.divmod(left, right)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_matmul_uses_object_loop(self, backend, reverse):
+        quad = np.array([[1, 2], [3, 4]], dtype=QuadPrecDType(backend=backend))
+        objects = np.array([[5, 6], [7, 8]], dtype=object)
+        left, right = (objects, quad) if reverse else (quad, objects)
+
+        result = np.matmul(left, right)
+        expected = np.matmul(left.astype(object), right.astype(object))
+
+        assert result.dtype == np.dtype(object)
+        np.testing.assert_array_equal(result, expected, strict=True)
+
+    @pytest.mark.parametrize("backend", ["sleef", "longdouble"], indirect=True)
+    @pytest.mark.parametrize(
+        "other",
+        [
+            np.array([3 + 1j, 4 + 2j], dtype=np.complex128),
+            np.array(["3", "4"], dtype="U1"),
+            np.array([b"3", b"4"], dtype="S1"),
+        ],
+    )
+    def test_unsupported_common_dtypes_still_raise(self, operands, other):
+        quad, _ = operands
+
+        with pytest.raises(np.exceptions.DTypePromotionError):
+            np.result_type(quad, other)
+        with pytest.raises(TypeError):
+            np.add(quad, other)
+
+    def test_builtin_object_dispatch_is_unchanged(self):
+        left = np.array([1, 2], dtype=object)
+        right = np.array([3, 4], dtype=object)
+
+        result = np.add(left, right)
+
+        assert result.dtype == np.dtype(object)
+        np.testing.assert_array_equal(result, np.array([4, 6], dtype=object), strict=True)
+
+
 def test_sleef_purecfma_symbols():
     """Test that SLEEF PURECFMA symbols are present in the compiled module.
     
