@@ -71,7 +71,12 @@ template <bool Aligned>
 static inline void
 store_quad(char *ptr, const quad_value *val, QuadBackendType backend)
 {
-    quad_value_store(ptr, val, backend);
+    if constexpr (Aligned) {
+        quad_value_store_aligned(ptr, val, backend);
+    }
+    else {
+        quad_value_store(ptr, val, backend);
+    }
 }
 
 #endif  // __cplusplus

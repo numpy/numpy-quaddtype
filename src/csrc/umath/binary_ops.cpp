@@ -132,8 +132,8 @@ quad_generic_binop_strided_loop_aligned(PyArrayMethod_Context *context, char *co
             *(Sleef_quad *)out_ptr = sleef_op((Sleef_quad *)in1_ptr, (Sleef_quad *)in2_ptr);
         }
         else {
-            quad_longdouble_store(out_ptr,
-                                  longdouble_op((long double *)in1_ptr, (long double *)in2_ptr));
+            quad_longdouble_store_aligned(
+                    out_ptr, longdouble_op((long double *)in1_ptr, (long double *)in2_ptr));
         }
 
         in1_ptr += in1_stride;
@@ -269,8 +269,8 @@ quad_generic_binop_2out_strided_loop_aligned(PyArrayMethod_Context *context, cha
         else {
             long double out1, out2;
             longdouble_op((long double *)in1_ptr, (long double *)in2_ptr, &out1, &out2);
-            quad_longdouble_store(out1_ptr, out1);
-            quad_longdouble_store(out2_ptr, out2);
+            quad_longdouble_store_aligned(out1_ptr, out1);
+            quad_longdouble_store_aligned(out2_ptr, out2);
         }
 
         in1_ptr += in1_stride;
@@ -384,7 +384,8 @@ quad_ldexp_strided_loop_aligned(PyArrayMethod_Context *context, char *const data
         if (backend == BACKEND_SLEEF) {
             *(Sleef_quad *)out_ptr = sleef_op((Sleef_quad *)in1_ptr, &exp_value);
         } else {
-            quad_longdouble_store(out_ptr, longdouble_op((long double *)in1_ptr, &exp_value));
+            quad_longdouble_store_aligned(
+                    out_ptr, longdouble_op((long double *)in1_ptr, &exp_value));
         }
 
         in1_ptr += in1_stride;

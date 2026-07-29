@@ -98,7 +98,7 @@ quad_generic_unary_op_strided_loop_aligned(PyArrayMethod_Context *context, char 
             *(Sleef_quad *)out_ptr = sleef_op((Sleef_quad *)in_ptr);
         }
         else {
-            quad_longdouble_store(out_ptr, longdouble_op((long double *)in_ptr));
+            quad_longdouble_store_aligned(out_ptr, longdouble_op((long double *)in_ptr));
         }
         in_ptr += in_stride;
         out_ptr += out_stride;
@@ -363,8 +363,8 @@ quad_generic_unary_op_2out_strided_loop_aligned(PyArrayMethod_Context *context, 
         else {
             long double out1, out2;
             longdouble_op((long double *)in_ptr, &out1, &out2);
-            quad_longdouble_store(out1_ptr, out1);
-            quad_longdouble_store(out2_ptr, out2);
+            quad_longdouble_store_aligned(out1_ptr, out1);
+            quad_longdouble_store_aligned(out2_ptr, out2);
         }
         in_ptr += in_stride;
         out1_ptr += out1_stride;
@@ -517,7 +517,7 @@ quad_frexp_strided_loop_aligned(PyArrayMethod_Context *context, char *const data
         }
         else {
             long double mantissa = longdouble_op((long double *)in_ptr, &out_exp);
-            quad_longdouble_store(out_mantissa_ptr, mantissa);
+            quad_longdouble_store_aligned(out_mantissa_ptr, mantissa);
         }
         memcpy(out_exp_ptr, &out_exp, sizeof(int));
 

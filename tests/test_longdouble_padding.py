@@ -1,3 +1,5 @@
+import ctypes
+
 import numpy as np
 import pytest
 
@@ -5,33 +7,58 @@ from numpy_quaddtype import QuadPrecDType, QuadPrecision
 from numpy_quaddtype._quaddtype_main import from_raw_bytes
 
 
+X87_LONG_DOUBLE_VALUE_BYTES = 10
+X87_LONG_DOUBLE_STORAGE_BYTES = 16
+
+
 def x87_longdouble_dtype():
     dtype = QuadPrecDType(backend="longdouble")
-    if dtype.itemsize != 16 or np.finfo(np.longdouble).nmant != 63:
+    if (
+        dtype.itemsize != X87_LONG_DOUBLE_STORAGE_BYTES
+        or np.finfo(np.longdouble).nmant != 63
+    ):
         pytest.skip("long double is not x87 80-bit stored in 16 bytes")
     return dtype
 
 
-def poisoned_array(dtype, offset=0):
-    storage = bytearray(b"\xa5" * (offset + dtype.itemsize))
+def poisoned_array(dtype, aligned):
+    storage = bytearray(b"\xa5" * (dtype.itemsize + dtype.alignment))
+    address = ctypes.addressof(ctypes.c_char.from_buffer(storage))
+    offset = (-address) % dtype.alignment
+    if not aligned:
+        offset += 1
     array = np.ndarray((1,), dtype=dtype, buffer=storage, offset=offset)
-    return array, storage
+    assert array.flags.aligned == aligned
+    return array, storage, offset
 
 
 def assert_zero_padding(storage, offset=0):
-    assert bytes(storage[offset + 10 : offset + 16]) == b"\x00" * 6
+    padding = storage[
+        offset + X87_LONG_DOUBLE_VALUE_BYTES : offset + X87_LONG_DOUBLE_STORAGE_BYTES
+    ]
+    assert bytes(padding) == b"\x00" * (
+        X87_LONG_DOUBLE_STORAGE_BYTES - X87_LONG_DOUBLE_VALUE_BYTES
+    )
 
 
 def assert_array_padding_zero(array):
     raw = array.tobytes()
     for start in range(0, len(raw), array.dtype.itemsize):
-        assert raw[start + 10 : start + 16] == b"\x00" * 6
+        assert_zero_padding(raw, start)
 
 
-@pytest.mark.parametrize("offset", [0, 1])
-def test_setitem_zeroes_longdouble_padding(offset):
+def test_scalar_construction_zeroes_longdouble_padding():
+    x87_longdouble_dtype()
+
+    value = QuadPrecision("1.5", backend="longdouble")
+
+    assert_zero_padding(value.__reduce__()[1][0])
+
+
+@pytest.mark.parametrize("aligned", [True, False])
+def test_setitem_zeroes_longdouble_padding(aligned):
     dtype = x87_longdouble_dtype()
-    array, storage = poisoned_array(dtype, offset)
+    array, storage, offset = poisoned_array(dtype, aligned)
 
     array[0] = QuadPrecision("1.5", backend="longdouble")
 
@@ -39,7 +66,7 @@ def test_setitem_zeroes_longdouble_padding(offset):
     assert_zero_padding(storage, offset)
 
 
-@pytest.mark.parametrize("offset", [0, 1])
+@pytest.mark.parametrize("aligned", [True, False])
 @pytest.mark.parametrize(
     ("operation", "expected"),
     [
@@ -48,10 +75,10 @@ def test_setitem_zeroes_longdouble_padding(offset):
         (lambda value, out: np.ldexp(value, 2, out=out), 6.0),
     ],
 )
-def test_ufunc_zeroes_longdouble_padding(offset, operation, expected):
+def test_ufunc_zeroes_longdouble_padding(aligned, operation, expected):
     dtype = x87_longdouble_dtype()
     value = np.array([1.5], dtype=dtype)
-    out, storage = poisoned_array(dtype, offset)
+    out, storage, offset = poisoned_array(dtype, aligned)
 
     operation(value, out)
 
@@ -59,42 +86,42 @@ def test_ufunc_zeroes_longdouble_padding(offset, operation, expected):
     assert_zero_padding(storage, offset)
 
 
-@pytest.mark.parametrize("offset", [0, 1])
-def test_multi_output_ufunc_zeroes_longdouble_padding(offset):
+@pytest.mark.parametrize("aligned", [True, False])
+def test_multi_output_ufunc_zeroes_longdouble_padding(aligned):
     dtype = x87_longdouble_dtype()
     value = np.array([1.5], dtype=dtype)
-    fractional, fractional_storage = poisoned_array(dtype, offset)
-    integral, integral_storage = poisoned_array(dtype, offset)
+    fractional, fractional_storage, fractional_offset = poisoned_array(dtype, aligned)
+    integral, integral_storage, integral_offset = poisoned_array(dtype, aligned)
 
     np.modf(value, out=(fractional, integral))
 
     assert fractional[0] == QuadPrecision("0.5", backend="longdouble")
     assert integral[0] == QuadPrecision("1.0", backend="longdouble")
-    assert_zero_padding(fractional_storage, offset)
-    assert_zero_padding(integral_storage, offset)
+    assert_zero_padding(fractional_storage, fractional_offset)
+    assert_zero_padding(integral_storage, integral_offset)
 
 
-@pytest.mark.parametrize("offset", [0, 1])
-def test_binary_multi_output_ufunc_zeroes_longdouble_padding(offset):
+@pytest.mark.parametrize("aligned", [True, False])
+def test_binary_multi_output_ufunc_zeroes_longdouble_padding(aligned):
     dtype = x87_longdouble_dtype()
     dividend = np.array([5.5], dtype=dtype)
     divisor = np.array([2.0], dtype=dtype)
-    quotient, quotient_storage = poisoned_array(dtype, offset)
-    remainder, remainder_storage = poisoned_array(dtype, offset)
+    quotient, quotient_storage, quotient_offset = poisoned_array(dtype, aligned)
+    remainder, remainder_storage, remainder_offset = poisoned_array(dtype, aligned)
 
     np.divmod(dividend, divisor, out=(quotient, remainder))
 
     assert quotient[0] == QuadPrecision("2.0", backend="longdouble")
     assert remainder[0] == QuadPrecision("1.5", backend="longdouble")
-    assert_zero_padding(quotient_storage, offset)
-    assert_zero_padding(remainder_storage, offset)
+    assert_zero_padding(quotient_storage, quotient_offset)
+    assert_zero_padding(remainder_storage, remainder_offset)
 
 
-@pytest.mark.parametrize("offset", [0, 1])
-def test_frexp_zeroes_longdouble_padding(offset):
+@pytest.mark.parametrize("aligned", [True, False])
+def test_frexp_zeroes_longdouble_padding(aligned):
     dtype = x87_longdouble_dtype()
     value = np.array([6.0], dtype=dtype)
-    mantissa, storage = poisoned_array(dtype, offset)
+    mantissa, storage, offset = poisoned_array(dtype, aligned)
     exponent = np.empty(1, dtype=np.int32)
 
     np.frexp(value, out=(mantissa, exponent))
@@ -104,9 +131,9 @@ def test_frexp_zeroes_longdouble_padding(offset):
     assert_zero_padding(storage, offset)
 
 
-@pytest.mark.parametrize("offset", [0, 1])
+@pytest.mark.parametrize("aligned", [True, False])
 @pytest.mark.parametrize("source_backend", [None, "sleef"])
-def test_cast_zeroes_longdouble_padding(offset, source_backend):
+def test_cast_zeroes_longdouble_padding(aligned, source_backend):
     dtype = x87_longdouble_dtype()
     if source_backend is None:
         source = np.array([1.5], dtype=np.float64)
@@ -115,7 +142,7 @@ def test_cast_zeroes_longdouble_padding(offset, source_backend):
             [QuadPrecision("1.5", backend=source_backend)],
             dtype=QuadPrecDType(backend=source_backend),
         )
-    out, storage = poisoned_array(dtype, offset)
+    out, storage, offset = poisoned_array(dtype, aligned)
 
     np.copyto(out, source, casting="unsafe")
 
@@ -150,10 +177,12 @@ def test_from_raw_bytes_zeroes_longdouble_padding():
     x87_longdouble_dtype()
     original = QuadPrecision("1.5", backend="longdouble")
     raw = bytearray(original.__reduce__()[1][0])
-    raw[10:] = b"\xa5" * 6
+    raw[X87_LONG_DOUBLE_VALUE_BYTES:] = b"\xa5" * (
+        X87_LONG_DOUBLE_STORAGE_BYTES - X87_LONG_DOUBLE_VALUE_BYTES
+    )
 
     result = from_raw_bytes(bytes(raw), "longdouble")
     result_raw = result.__reduce__()[1][0]
 
     assert result == original
-    assert result_raw[10:] == b"\x00" * 6
+    assert_zero_padding(result_raw)
