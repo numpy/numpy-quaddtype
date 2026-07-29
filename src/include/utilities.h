@@ -63,12 +63,7 @@ template <bool Aligned>
 static inline void
 load_quad(const char *ptr, QuadBackendType backend, quad_value *out)
 {
-    if (backend == BACKEND_SLEEF) {
-        out->sleef_value = load<Aligned, Sleef_quad>(ptr);
-    }
-    else {
-        out->longdouble_value = load<Aligned, long double>(ptr);
-    }
+    quad_value_load(out, ptr, backend);
 }
 
 // Store quad_value to memory based on backend and alignment
@@ -76,11 +71,11 @@ template <bool Aligned>
 static inline void
 store_quad(char *ptr, const quad_value *val, QuadBackendType backend)
 {
-    if (backend == BACKEND_SLEEF) {
-        store<Aligned, Sleef_quad>(ptr, val->sleef_value);
+    if constexpr (Aligned) {
+        quad_value_store_aligned(ptr, val, backend);
     }
     else {
-        store<Aligned, long double>(ptr, val->longdouble_value);
+        quad_value_store(ptr, val, backend);
     }
 }
 

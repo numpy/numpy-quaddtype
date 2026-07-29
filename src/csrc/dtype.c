@@ -23,36 +23,6 @@
 #include "constants.hpp"
 #include "utilities.h"
 
-static inline int
-quad_load(void *x, char *data_ptr, QuadBackendType backend)
-{
-    if (data_ptr == NULL || x == NULL) {
-        return -1;
-    }
-    if (backend == BACKEND_SLEEF) {
-        *(Sleef_quad *)x = *(Sleef_quad *)data_ptr;
-    }
-    else {
-        *(long double *)x = *(long double *)data_ptr;
-    }
-    return 0;
-}
-
-static inline int
-quad_store(char *data_ptr, void *x, QuadBackendType backend)
-{
-    if (data_ptr == NULL || x == NULL) {
-        return -1;
-    }
-    if (backend == BACKEND_SLEEF) {
-        *(Sleef_quad *)data_ptr = *(Sleef_quad *)x;
-    }
-    else {
-        *(long double *)data_ptr = *(long double *)x;
-    }
-    return 0;
-}
-
 QuadPrecDTypeObject *
 new_quaddtype_instance(QuadBackendType backend)
 {
@@ -160,13 +130,7 @@ quadprec_setitem(QuadPrecDTypeObject *descr, PyObject *obj, char *dataptr)
         }
     }
 
-    if (quad_store(dataptr, &value->value, descr->backend) < 0) {
-        Py_DECREF(value);
-        char error_msg[100];
-        snprintf(error_msg, sizeof(error_msg), "Invalid memory location %p", (void *)dataptr);
-        PyErr_SetString(PyExc_ValueError, error_msg);
-        return -1;
-    }
+    quad_value_store(dataptr, &value->value, descr->backend);
 
     Py_DECREF(value);
     return 0;
@@ -179,13 +143,7 @@ quadprec_getitem(QuadPrecDTypeObject *descr, char *dataptr)
     if (!new) {
         return NULL;
     }
-    if (quad_load(&new->value, dataptr, descr->backend) < 0) {
-        Py_DECREF(new);
-        char error_msg[100];
-        snprintf(error_msg, sizeof(error_msg), "Invalid memory location %p", (void *)dataptr);
-        PyErr_SetString(PyExc_ValueError, error_msg);
-        return NULL;
-    }
+    quad_value_load_canonical(&new->value, dataptr, descr->backend);
     return (PyObject *)new;
 }
 
@@ -315,9 +273,10 @@ quadprec_fill(void *buffer, npy_intp length, void *arr_)
         long double *buf = (long double *)buffer;
         long double start = buf[0];
         long double delta = buf[1] - start;
-        
+        char *bytes = (char *)buffer;
+
         for (i = 2; i < length; ++i) {
-            buf[i] = start + i * delta;
+            quad_longdouble_store(bytes + i * descr->base.elsize, start + i * delta);
         }
     }
     
@@ -362,13 +321,8 @@ quadprec_scanfunc(FILE *fp, void *dptr, char *ignore, PyArray_Descr *descr_gener
     if (err < 0 || *endptr != '\0') {
         return 0;  /* Return 0 on parse error (no items read) */
     }
-    if (descr->backend == BACKEND_SLEEF) {
-        *(Sleef_quad *)dptr = val.sleef_value;
-    }
-    else {
-       *(long double *)dptr = val.longdouble_value;
-    }
-    
+    quad_value_store(dptr, &val, descr->backend);
+
     return 1;  /* Return 1 on success (1 item read) */
 }
 
@@ -381,12 +335,7 @@ quadprec_fromstr(char *s, void *dptr, char **endptr, PyArray_Descr *descr_generi
     if (err < 0) {
         return -1;
     }
-    if(descr->backend == BACKEND_SLEEF) {
-        *(Sleef_quad *)dptr = val.sleef_value;
-    }
-    else {
-        *(long double *)dptr = val.longdouble_value;
-    }
+    quad_value_store(dptr, &val, descr->backend);
     return 0;
 }
 

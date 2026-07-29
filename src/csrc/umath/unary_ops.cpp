@@ -61,18 +61,16 @@ quad_generic_unary_op_strided_loop_unaligned(PyArrayMethod_Context *context, cha
 
     QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
     QuadBackendType backend = descr->backend;
-    size_t elem_size = (backend == BACKEND_SLEEF) ? sizeof(Sleef_quad) : sizeof(long double);
-
     quad_value in, out;
     while (N--) {
-        memcpy(&in, in_ptr, elem_size);
+        quad_value_load(&in, in_ptr, backend);
         if (backend == BACKEND_SLEEF) {
             out.sleef_value = sleef_op(&in.sleef_value);
         }
         else {
             out.longdouble_value = longdouble_op(&in.longdouble_value);
         }
-        memcpy(out_ptr, &out, elem_size);
+        quad_value_store(out_ptr, &out, backend);
 
         in_ptr += in_stride;
         out_ptr += out_stride;
@@ -100,7 +98,7 @@ quad_generic_unary_op_strided_loop_aligned(PyArrayMethod_Context *context, char 
             *(Sleef_quad *)out_ptr = sleef_op((Sleef_quad *)in_ptr);
         }
         else {
-            *(long double *)out_ptr = longdouble_op((long double *)in_ptr);
+            quad_longdouble_store_aligned(out_ptr, longdouble_op((long double *)in_ptr));
         }
         in_ptr += in_stride;
         out_ptr += out_stride;
@@ -321,19 +319,17 @@ quad_generic_unary_op_2out_strided_loop_unaligned(PyArrayMethod_Context *context
 
     QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
     QuadBackendType backend = descr->backend;
-    size_t elem_size = (backend == BACKEND_SLEEF) ? sizeof(Sleef_quad) : sizeof(long double);
-
     quad_value in, out1, out2;
     while (N--) {
-        memcpy(&in, in_ptr, elem_size);
+        quad_value_load(&in, in_ptr, backend);
         if (backend == BACKEND_SLEEF) {
             sleef_op(&in.sleef_value, &out1.sleef_value, &out2.sleef_value);
         }
         else {
             longdouble_op(&in.longdouble_value, &out1.longdouble_value, &out2.longdouble_value);
         }
-        memcpy(out1_ptr, &out1, elem_size);
-        memcpy(out2_ptr, &out2, elem_size);
+        quad_value_store(out1_ptr, &out1, backend);
+        quad_value_store(out2_ptr, &out2, backend);
 
         in_ptr += in_stride;
         out1_ptr += out1_stride;
@@ -365,7 +361,10 @@ quad_generic_unary_op_2out_strided_loop_aligned(PyArrayMethod_Context *context, 
             sleef_op((Sleef_quad *)in_ptr, (Sleef_quad *)out1_ptr, (Sleef_quad *)out2_ptr);
         }
         else {
-            longdouble_op((long double *)in_ptr, (long double *)out1_ptr, (long double *)out2_ptr);
+            long double out1, out2;
+            longdouble_op((long double *)in_ptr, &out1, &out2);
+            quad_longdouble_store_aligned(out1_ptr, out1);
+            quad_longdouble_store_aligned(out2_ptr, out2);
         }
         in_ptr += in_stride;
         out1_ptr += out1_stride;
@@ -470,20 +469,18 @@ quad_frexp_strided_loop_unaligned(PyArrayMethod_Context *context, char *const da
 
     QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
     QuadBackendType backend = descr->backend;
-    size_t elem_size = (backend == BACKEND_SLEEF) ? sizeof(Sleef_quad) : sizeof(long double);
-
     quad_value in, out_mantissa;
     int out_exp;
     
     while (N--) {
-        memcpy(&in, in_ptr, elem_size);
+        quad_value_load(&in, in_ptr, backend);
         if (backend == BACKEND_SLEEF) {
             out_mantissa.sleef_value = sleef_op(&in.sleef_value, &out_exp);
         }
         else {
             out_mantissa.longdouble_value = longdouble_op(&in.longdouble_value, &out_exp);
         }
-        memcpy(out_mantissa_ptr, &out_mantissa, elem_size);
+        quad_value_store(out_mantissa_ptr, &out_mantissa, backend);
         memcpy(out_exp_ptr, &out_exp, sizeof(int));
 
         in_ptr += in_stride;
@@ -520,7 +517,7 @@ quad_frexp_strided_loop_aligned(PyArrayMethod_Context *context, char *const data
         }
         else {
             long double mantissa = longdouble_op((long double *)in_ptr, &out_exp);
-            memcpy(out_mantissa_ptr, &mantissa, sizeof(long double));
+            quad_longdouble_store_aligned(out_mantissa_ptr, mantissa);
         }
         memcpy(out_exp_ptr, &out_exp, sizeof(int));
 
