@@ -8,6 +8,7 @@
 
 #include <Python.h>
 #include <cstdio>
+#include <cstring>
 
 #include "numpy/arrayobject.h"
 #include "numpy/ufuncobject.h"
@@ -256,6 +257,14 @@ quad_reduce_comp_strided_loop_unaligned(PyArrayMethod_Context *context, char *co
 }
 
 
+static bool
+comparison_object_output_is_bool(PyUFuncObject *ufunc)
+{
+    return strcmp(ufunc->name, "logical_and") != 0 &&
+           strcmp(ufunc->name, "logical_or") != 0 &&
+           strcmp(ufunc->name, "logical_xor") != 0;
+}
+
 NPY_NO_EXPORT int
 comparison_ufunc_promoter(PyObject *ufunc_obj, PyArray_DTypeMeta *const op_dtypes[],
                           PyArray_DTypeMeta *const signature[], PyArray_DTypeMeta *new_op_dtypes[])
@@ -271,20 +280,24 @@ comparison_ufunc_promoter(PyObject *ufunc_obj, PyArray_DTypeMeta *const op_dtype
         return 0;
     }
 
-    // Normal path: promote both inputs to QuadPrecDType, output is Bool
-    for (int i = 0; i < 2; i++) {
-        if (signature[i]) {
-            Py_INCREF(signature[i]);
-            new_op_dtypes[i] = signature[i];
+    PyUFuncObject *ufunc = (PyUFuncObject *)ufunc_obj;
+    if (quad_ufunc_has_object_input(ufunc, op_dtypes)) {
+        for (int i = 0; i < 2; i++) {
+            quad_set_promoted_dtype(signature[i], &PyArray_ObjectDType, &new_op_dtypes[i]);
         }
-        else {
-            Py_INCREF(&QuadPrecDType);
-            new_op_dtypes[i] = &QuadPrecDType;
-        }
+        PyArray_DTypeMeta *output_dtype = comparison_object_output_is_bool(ufunc)
+                                                ? &PyArray_BoolDType
+                                                : &PyArray_ObjectDType;
+        quad_set_promoted_dtype(signature[2], output_dtype, &new_op_dtypes[2]);
+        return 0;
     }
 
-    Py_INCREF(&PyArray_BoolDType);
-    new_op_dtypes[2] = &PyArray_BoolDType;
+    // Normal path: promote both inputs to QuadPrecDType, output is Bool
+    for (int i = 0; i < 2; i++) {
+        quad_set_promoted_dtype(signature[i], &QuadPrecDType, &new_op_dtypes[i]);
+    }
+
+    quad_set_promoted_dtype(signature[2], &PyArray_BoolDType, &new_op_dtypes[2]);
     return 0;
 }
 
@@ -357,7 +370,7 @@ create_quad_comparison_ufunc(PyObject *numpy, const char *ufunc_name)
 
     // Register promoter for (QuadPrecDType, Any, Bool) - needed for mixed-type comparisons
     PyObject *DTypes = PyTuple_Pack(3, &QuadPrecDType, &PyArrayDescr_Type, &PyArray_BoolDType);
-    if (DTypes == 0) {
+    if (DTypes == NULL) {
         Py_DECREF(promoter_capsule);
         Py_DECREF(ufunc);
         return -1;
@@ -373,7 +386,7 @@ create_quad_comparison_ufunc(PyObject *numpy, const char *ufunc_name)
 
     // Register promoter for (Any, QuadPrecDType, Bool) - needed for reverse mixed-type comparisons
     DTypes = PyTuple_Pack(3, &PyArrayDescr_Type, &QuadPrecDType, &PyArray_BoolDType);
-    if (DTypes == 0) {
+    if (DTypes == NULL) {
         Py_DECREF(promoter_capsule);
         Py_DECREF(ufunc);
         return -1;
@@ -387,6 +400,7 @@ create_quad_comparison_ufunc(PyObject *numpy, const char *ufunc_name)
     }
     Py_DECREF(promoter_capsule);
     Py_DECREF(DTypes);
+
     Py_DECREF(ufunc);
 
     return 0;
