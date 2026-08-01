@@ -4,9 +4,7 @@ import threading
 import pytest
 
 import numpy as np
-from numpy._core import _rational_tests
-from numpy._core.tests.test_stringdtype import random_unicode_string_list
-from numpy.testing import IS_64BIT, IS_WASM
+from numpy.testing import IS_WASM
 from numpy.testing._private.utils import run_threaded
 
 if IS_WASM:
