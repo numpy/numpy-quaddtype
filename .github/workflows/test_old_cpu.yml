@@ -28,7 +28,7 @@ jobs:
             sde_cpu: "hsw"
             meson_args: "-Csetup-args=-Ddisable_quadblas=true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
