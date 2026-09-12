@@ -15,6 +15,9 @@ extern "C" {
 }
 #include <cstring>
 #include <cstdlib>
+#include <cfloat>
+#include <cfenv>
+#include <limits>
 #include <type_traits>
 #include "sleef.h"
 #include "sleefquad.h"
@@ -51,6 +54,225 @@ Total: 46 characters, using 50 as a safe buffer
 static inline const char *
 quad_to_string_adaptive_cstr(Sleef_quad *sleef_val, npy_intp unicode_size_chars);
 
+enum QuadRoundingMode {
+    QUAD_ROUND_NEAREST,
+    QUAD_ROUND_DOWN,
+    QUAD_ROUND_UP,
+    QUAD_ROUND_ZERO,
+};
+
+static inline QuadRoundingMode
+quad_get_rounding_mode()
+{
+#ifdef _MSC_VER
+    unsigned int control;
+    if (_controlfp_s(&control, 0, 0) != 0) {
+        return QUAD_ROUND_NEAREST;
+    }
+    switch (control & _MCW_RC) {
+        case _RC_DOWN:
+            return QUAD_ROUND_DOWN;
+        case _RC_UP:
+            return QUAD_ROUND_UP;
+        case _RC_CHOP:
+            return QUAD_ROUND_ZERO;
+        case _RC_NEAR:
+        default:
+            return QUAD_ROUND_NEAREST;
+    }
+#else
+    switch (std::fegetround()) {
+        case FE_DOWNWARD:
+            return QUAD_ROUND_DOWN;
+        case FE_UPWARD:
+            return QUAD_ROUND_UP;
+        case FE_TOWARDZERO:
+            return QUAD_ROUND_ZERO;
+        case FE_TONEAREST:
+        default:
+            return QUAD_ROUND_NEAREST;
+    }
+#endif
+}
+
+template <typename Float>
+static inline Float
+cast_overflow_result(bool negative)
+{
+    QuadRoundingMode mode = quad_get_rounding_mode();
+    bool to_infinity = mode == QUAD_ROUND_NEAREST || (mode == QUAD_ROUND_UP && !negative) ||
+                       (mode == QUAD_ROUND_DOWN && negative);
+    Float magnitude = to_infinity ? std::numeric_limits<Float>::infinity()
+                                  : std::numeric_limits<Float>::max();
+    return negative ? -magnitude : magnitude;
+}
+
+static inline void
+cast_longdouble_to_sleef(long double value, Sleef_quad *out)
+{
+    static_assert(FLT_RADIX == 2, "Quad backend conversion requires a binary long double");
+    static_assert(LDBL_MANT_DIG <= 113, "long double is wider than the SLEEF binary128 backend");
+    static_assert(LDBL_MIN_EXP >= -16381 && LDBL_MAX_EXP <= 16384,
+                  "long double range exceeds the SLEEF binary128 backend");
+
+    Sleef_quad result;
+    if (std::isnan(value)) {
+        result = std::signbit(value) ? QUAD_PRECISION_NEG_NAN : QUAD_PRECISION_NAN;
+        memcpy(out, &result, sizeof(result));
+        return;
+    }
+    if (std::isinf(value)) {
+        result = value < 0 ? QUAD_PRECISION_NINF : QUAD_PRECISION_INF;
+        memcpy(out, &result, sizeof(result));
+        return;
+    }
+    if (value == 0.0L) {
+        result = std::signbit(value) ? Sleef_negq1(QUAD_PRECISION_ZERO) : QUAD_PRECISION_ZERO;
+        memcpy(out, &result, sizeof(result));
+        return;
+    }
+
+#if defined(SLEEF_LONGDOUBLE_IS_IEEEQP)
+    static_assert(sizeof(Sleef_quad) == sizeof(long double));
+    memcpy(out, &value, sizeof(value));
+    return;
+#elif defined(SLEEF_FLOAT128_IS_IEEEQP)
+    result = static_cast<Sleef_quad>(value);
+    memcpy(out, &result, sizeof(result));
+    return;
+#elif LDBL_MANT_DIG == DBL_MANT_DIG && LDBL_MAX_EXP == DBL_MAX_EXP
+    // Widening binary64 to binary128 is exact.
+    result = Sleef_cast_from_doubleq1((double)value);
+    memcpy(out, &result, sizeof(result));
+    return;
+#else
+    static_assert(LDBL_MANT_DIG == 64,
+                  "unsupported long double format for the portable conversion path");
+#endif
+
+    bool negative = std::signbit(value);
+    int exponent;
+    long double fraction = std::frexp(std::fabs(value), &exponent);
+    Sleef_quad significand = QUAD_PRECISION_ZERO;
+
+    int remaining = LDBL_MANT_DIG;
+    while (remaining > 0) {
+        int chunk_bits = remaining > 32 ? 32 : remaining;
+        long double scaled = std::ldexp(fraction, chunk_bits);
+        int64_t chunk = (int64_t)std::floor(scaled);
+        fraction = scaled - (long double)chunk;
+        significand = Sleef_addq1_u05(Sleef_ldexpq1(significand, chunk_bits),
+                                      Sleef_cast_from_int64q1(chunk));
+        remaining -= chunk_bits;
+    }
+
+    result = Sleef_ldexpq1(significand, exponent - LDBL_MANT_DIG);
+    if (negative) {
+        result = Sleef_negq1(result);
+    }
+    memcpy(out, &result, sizeof(result));
+}
+
+template <typename Float>
+static inline Float
+cast_sleef_to_binary(Sleef_quad value)
+{
+    constexpr int mantissa_digits = std::numeric_limits<Float>::digits;
+    constexpr int min_exponent = std::numeric_limits<Float>::min_exponent;
+    constexpr int max_exponent = std::numeric_limits<Float>::max_exponent;
+    static_assert(FLT_RADIX == 2, "Quad backend conversion requires a binary long double");
+    static_assert(std::numeric_limits<Float>::radix == 2,
+                  "target floating-point type must use radix 2");
+    static_assert(mantissa_digits <= 113,
+                  "target floating-point type is wider than SLEEF binary128");
+    static_assert(min_exponent >= -16381 && max_exponent <= 16384,
+                  "target floating-point range exceeds SLEEF binary128");
+
+    bool negative = quad_signbit(&value);
+    if (quad_isnan(&value)) {
+        Float result = std::numeric_limits<Float>::quiet_NaN();
+        return std::copysign(result, negative ? (Float)-1 : (Float)1);
+    }
+    if (quad_isinf(&value)) {
+        Float result = std::numeric_limits<Float>::infinity();
+        return negative ? -result : result;
+    }
+    if (Sleef_icmpeqq1(value, QUAD_PRECISION_ZERO)) {
+        return negative ? (Float)-0.0 : (Float)0.0;
+    }
+
+    Sleef_quad magnitude = Sleef_fabsq1(value);
+    int exponent;
+    Sleef_frexpq1(magnitude, &exponent);
+    // min_exponent follows C's convention: min normal is 2**(min_exponent - 1).
+    int quantum_exponent =
+            exponent >= min_exponent ? exponent - mantissa_digits : min_exponent - mantissa_digits;
+
+    Sleef_quad scaled = Sleef_ldexpq1(magnitude, -quantum_exponent);
+    Sleef_quad rounded_units;
+    switch (quad_get_rounding_mode()) {
+        case QUAD_ROUND_DOWN:
+            rounded_units = negative ? Sleef_ceilq1(scaled) : Sleef_floorq1(scaled);
+            break;
+        case QUAD_ROUND_UP:
+            rounded_units = negative ? Sleef_floorq1(scaled) : Sleef_ceilq1(scaled);
+            break;
+        case QUAD_ROUND_ZERO:
+            rounded_units = Sleef_floorq1(scaled);
+            break;
+        case QUAD_ROUND_NEAREST:
+        default:
+            rounded_units = quad_rint(&scaled);
+            break;
+    }
+    Sleef_quad rounded = Sleef_ldexpq1(rounded_units, quantum_exponent);
+    if (quad_isinf(&rounded)) {
+        return cast_overflow_result<Float>(negative);
+    }
+    if (Sleef_icmpeqq1(rounded, QUAD_PRECISION_ZERO)) {
+        return negative ? -0.0L : 0.0L;
+    }
+
+    Sleef_quad fraction = Sleef_frexpq1(rounded, &exponent);
+    if (exponent > max_exponent) {
+        return cast_overflow_result<Float>(negative);
+    }
+
+    Float significand = 0;
+    int remaining = mantissa_digits;
+    while (remaining > 0) {
+        int chunk_bits = remaining > 32 ? 32 : remaining;
+        Sleef_quad chunk_source = Sleef_ldexpq1(fraction, chunk_bits);
+        Sleef_quad chunk_integer = Sleef_truncq1(chunk_source);
+        int64_t chunk = Sleef_cast_to_int64q1(chunk_integer);
+        fraction = Sleef_subq1_u05(chunk_source, chunk_integer);
+        significand = std::ldexp(significand, chunk_bits) + (Float)chunk;
+        remaining -= chunk_bits;
+    }
+
+    Float result = std::ldexp(significand, exponent - mantissa_digits);
+    return negative ? -result : result;
+}
+
+static inline long double
+cast_sleef_to_longdouble(Sleef_quad value)
+{
+#if defined(SLEEF_LONGDOUBLE_IS_IEEEQP)
+    static_assert(sizeof(Sleef_quad) == sizeof(long double));
+    long double native;
+    memcpy(&native, &value, sizeof(native));
+    return native;
+#elif defined(SLEEF_FLOAT128_IS_IEEEQP)
+    return static_cast<long double>(value);
+#else
+    static_assert(LDBL_MANT_DIG == 53 || LDBL_MANT_DIG == 64,
+                  "unsupported long double format for the portable conversion path");
+    // Do not use Sleef_cast_to_doubleq1 for p=53: it is not correctly rounded
+    // at binary64 midpoint neighbors on all SLEEF backends (notably macOS ARM).
+    return cast_sleef_to_binary<long double>(value);
+#endif
+}
+
 static NPY_CASTING
 quad_to_quad_resolve_descriptors(PyObject *NPY_UNUSED(self),
                                  PyArray_DTypeMeta *NPY_UNUSED(dtypes[2]),
@@ -86,8 +308,6 @@ quad_to_quad_resolve_descriptors(PyObject *NPY_UNUSED(self),
 }
 
 // Helper function for quad-to-quad same_value check (inter-backend)
-// NOTE: the inter-backend uses `double` as intermediate,
-// so only values that can be exactly represented in double can pass same_value check
 static inline int
 quad_to_quad_same_value_check(const quad_value *in_val, QuadBackendType backend_in,
                               const quad_value *out_val, QuadBackendType backend_out)
@@ -107,8 +327,7 @@ quad_to_quad_same_value_check(const quad_value *in_val, QuadBackendType backend_
             roundtrip.sleef_value = (ld > 0) ? QUAD_PRECISION_INF : QUAD_PRECISION_NINF;
         }
         else {
-            Sleef_quad temp = Sleef_cast_from_doubleq1(static_cast<double>(ld));
-            memcpy(&roundtrip.sleef_value, &temp, sizeof(Sleef_quad));
+            cast_longdouble_to_sleef(ld, &roundtrip.sleef_value);
         }
         
         // Compare in SLEEF domain && signbit preserved
@@ -121,8 +340,8 @@ quad_to_quad_same_value_check(const quad_value *in_val, QuadBackendType backend_
     else {
         // Input was longdouble, output is SLEEF
         // Convert SLEEF back to longdouble for comparison
-        roundtrip.longdouble_value = static_cast<long double>(cast_sleef_to_double(out_val->sleef_value));
-        
+        roundtrip.longdouble_value = cast_sleef_to_longdouble(out_val->sleef_value);
+
         // Compare in longdouble domain && signbit preserved
         bool is_sign_preserved = (ld_signbit(&in_val->longdouble_value) == ld_signbit(&roundtrip.longdouble_value));
         if ((std::isnan(in_val->longdouble_value) && std::isnan(roundtrip.longdouble_value)) && is_sign_preserved)
@@ -168,24 +387,12 @@ quad_to_quad_strided_loop(PyArrayMethod_Context *context, char *const data[],
             quad_value out_val;
             if (backend_in == BACKEND_SLEEF) 
             {
-              out_val.longdouble_value = static_cast<long double>(cast_sleef_to_double(in_val.sleef_value));
+                out_val.longdouble_value = cast_sleef_to_longdouble(in_val.sleef_value);
             }
             else 
             {
               long double ld = in_val.longdouble_value;
-              if (std::isnan(ld)) {
-                  out_val.sleef_value = (!ld_signbit(&ld)) ? QUAD_PRECISION_NAN : QUAD_PRECISION_NEG_NAN;
-              }
-              else if (std::isinf(ld)) {
-                  out_val.sleef_value = (ld > 0) ? QUAD_PRECISION_INF : QUAD_PRECISION_NINF;
-              }
-              else 
-              {
-                  // to prevent compiler optimizations, ABI handling issues with __float128 on x86-64 machines
-                  // won't be expensive as for fixed size compiler can optimize memcpy with movq
-                  Sleef_quad temp = Sleef_cast_from_doubleq1(static_cast<double>(ld));
-                  std::memcpy(&out_val.sleef_value, &temp, sizeof(Sleef_quad));
-              }
+              cast_longdouble_to_sleef(ld, &out_val.sleef_value);
             }
             
             // check same_value for inter-backend casts
@@ -1141,16 +1348,7 @@ to_quad<long double>(long double x, QuadBackendType backend)
     quad_value result;
     if (backend == BACKEND_SLEEF) 
     {
-      if (std::isnan(x)) {
-          result.sleef_value = std::signbit(x) ? QUAD_PRECISION_NEG_NAN : QUAD_PRECISION_NAN;
-      }
-      else if (std::isinf(x)) {
-          result.sleef_value = (x > 0) ? QUAD_PRECISION_INF : QUAD_PRECISION_NINF;
-      }
-      else {
-          Sleef_quad temp = Sleef_cast_from_doubleq1(static_cast<double>(x));
-          std::memcpy(&result.sleef_value, &temp, sizeof(Sleef_quad));
-      }
+        cast_longdouble_to_sleef(x, &result.sleef_value);
     }
     else {
         result.longdouble_value = x;
@@ -1414,7 +1612,7 @@ inline double
 from_quad<double>(const quad_value *x, QuadBackendType backend)
 {
     if (backend == BACKEND_SLEEF) {
-        return cast_sleef_to_double(x->sleef_value);
+        return cast_sleef_to_binary<double>(x->sleef_value);
     }
     else {
         return (double)x->longdouble_value;
@@ -1426,7 +1624,7 @@ inline long double
 from_quad<long double>(const quad_value *x, QuadBackendType backend)
 {
     if (backend == BACKEND_SLEEF) {
-        return (long double)cast_sleef_to_double(x->sleef_value);
+        return cast_sleef_to_longdouble(x->sleef_value);
     }
     else {
         return x->longdouble_value;
