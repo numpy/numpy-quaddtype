@@ -46,7 +46,7 @@ jobs:
 
     name: "${{ matrix.BUILD_PROP[0] }}"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-tags: true
@@ -63,7 +63,7 @@ jobs:
           sudo apt install -y ninja-build gcc-${TOOLCHAIN_NAME} g++-${TOOLCHAIN_NAME} gfortran-${TOOLCHAIN_NAME}
 
       - name: Cache docker container
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         id: container-cache
         with:
           path: ~/docker_${{ matrix.BUILD_PROP[1] }}
