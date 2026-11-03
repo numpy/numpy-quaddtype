@@ -136,6 +136,37 @@ The fundamental types provided by NumPy QuadDType.
        True
 ```
 
+### Mixing backends
+
+Values never move between the SLEEF and longdouble backends: any operation
+that would combine or convert them raises `TypeError`. This covers ufuncs,
+`out=` arrays, `astype`, assignment, `np.concatenate`, `np.result_type` and
+`QuadPrecision(value, backend=...)`. NumPy's own dtypes, including
+`np.longdouble`, work with both backends.
+
+Python `int` and `float` operands use the SLEEF backend, so with longdouble
+arrays they raise too. This includes NumPy functions that pass Python scalars
+internally, such as `np.ones`, `np.full`, `np.ones_like`, `mean`, `var`,
+`std`, `np.median`, `np.isclose`, `np.allclose` and `np.round`. Pass NumPy scalars or arrays, or
+`QuadPrecision(..., backend="longdouble")`, instead, for example
+`np.full(3, np.longdouble(1), dtype=dt)` or `np.ones(3).astype(dt)`:
+
+```python
+>>> import numpy as np
+>>> from numpy_quaddtype import QuadPrecDType
+>>> ld = np.array([1.5, 2.5], dtype=QuadPrecDType(backend="longdouble"))
+>>> ld + np.float64(1)
+array([2.5, 3.5], dtype=QuadPrecDType(backend='longdouble'))
+>>> ld + 1
+Traceback (most recent call last):
+  ...
+TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble' (Python int and float operands use 'sleef')
+>>> ld.astype(QuadPrecDType())
+Traceback (most recent call last):
+  ...
+TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble' (Python int and float operands use 'sleef')
+```
+
 ## Convenience Functions
 
 ```{eval-rst}
