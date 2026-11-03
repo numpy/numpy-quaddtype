@@ -139,7 +139,9 @@ The fundamental types provided by NumPy QuadDType.
 ### Mixing backends
 
 Values never move between the SLEEF and longdouble backends: any operation
-that would combine or convert them raises `TypeError`. This covers ufuncs,
+that would combine or convert them raises `TypeError`: either
+`Cannot mix QuadPrecision backends ...` or, where NumPy checks the casting rule
+first, NumPy's own `Cannot cast ...` message. This covers ufuncs,
 `out=` arrays, `astype`, assignment, `np.concatenate`, `np.result_type` and
 `QuadPrecision(value, backend=...)`. NumPy's own dtypes, including
 `np.longdouble`, work with both backends.
