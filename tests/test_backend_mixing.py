@@ -167,7 +167,7 @@ def test_constructor_default_backend_rejects_longdouble():
 ])
 def test_python_literal_with_longdouble_array_raises(op):
     # NumPy gives Python int and float operands the default (SLEEF) descriptor.
-    with pytest.raises(TypeError, match="Python int and float operands use 'sleef'"):
+    with pytest.raises(TypeError, match=MIXED):
         op(_arr([1.0, 2.0], "longdouble"))
 
 
