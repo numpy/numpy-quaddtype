@@ -26,6 +26,7 @@ A cross-platform Quad (128-bit) float Data-Type for NumPy.
     - [Serving the documentation](#serving-the-documentation)
   - [Development Tips](#development-tips)
     - [Cleaning the Build Directory](#cleaning-the-build-directory)
+  - [Changelog](#changelog)
 
 ## Installation
 
@@ -257,3 +258,44 @@ The subproject folders (`subprojects/sleef`, `subprojects/qblas`) are cloned as 
 ```bash
 git clean -ffxd
 ```
+
+## Changelog
+
+### Unreleased
+
+#### Backwards-incompatible changes
+
+- Values no longer move between the SLEEF and longdouble backends. Every
+  operation that would combine or convert them now raises
+  `TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble'`.
+  Previously these silently converted through `float64` (losing precision)
+  or picked a backend inconsistently. This covers:
+  - ufuncs with operands or `out=` arrays of different backends (before:
+    arithmetic and comparisons silently used longdouble);
+  - `astype`, `np.copyto`, slice and item assignment between backends
+    (before: silent conversion through `float64`);
+  - `np.result_type`, `np.promote_types` and `np.concatenate` across
+    backends (before: silently picked SLEEF); `np.array` of mixed
+    `QuadPrecision` scalars now gives an object array;
+  - `QuadPrecision(value, backend=...)` with a `QuadPrecision` of the other
+    backend, including `QuadPrecision(x)` for a longdouble `x`, since the
+    default backend is SLEEF.
+- Python `int` and `float` operands use the SLEEF backend, so with longdouble
+  arrays they now raise as well. This includes NumPy functions that pass
+  Python scalars internally, such as `np.ones`, `np.full`, `np.ones_like`,
+  `mean`, `var`, `std`, `np.median`, `np.isclose`, `np.allclose` and
+  `np.round`. Use NumPy scalars or arrays
+  instead, for example `ld / np.float64(2)`,
+  `np.full(3, np.longdouble(1), dtype=ld.dtype)` or
+  `np.ones(3).astype(ld.dtype)`. SLEEF arrays and NumPy's own dtypes,
+  including `np.longdouble`, are unaffected.
+
+#### Bug fixes
+
+- Assigning a `QuadPrecision` scalar into an array of the other backend, or
+  casting an object array of them, stored the raw bytes under the wrong
+  backend (for example `0.0` instead of `1.5`). It now raises.
+- Unary ufuncs such as `np.sqrt` with an `out=` array of the other backend
+  and `casting="unsafe"` wrote values in the wrong format. They now raise.
+- `QuadPrecision(q)` for a `QuadPrecision` `q` of the same backend rounded
+  through `float64`; it now copies the value exactly.
