@@ -38,8 +38,7 @@ static inline void
 quad_set_backend_mismatch_error(void)
 {
     PyErr_SetString(PyExc_TypeError,
-                    "Cannot mix QuadPrecision backends 'sleef' and 'longdouble' "
-                    "(Python int and float operands use 'sleef')");
+                    "Cannot mix QuadPrecision backends 'sleef' and 'longdouble'");
 }
 
 /*
