@@ -26,57 +26,43 @@ extern "C" {
 #include "umath/promoters.hpp"
 #include "quadblas_interface.h"
 
+// Mixed backends stay unsupported until inter-backend casts are lossless (gh-112, gh-113).
 static NPY_CASTING
-quad_matmul_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const dtypes[],
-                                PyArray_Descr *const given_descrs[], PyArray_Descr *loop_descrs[],
-                                npy_intp *NPY_UNUSED(view_offset))
+quad_dot_family_resolve_descriptors(PyObject *NPY_UNUSED(self),
+                                    PyArray_DTypeMeta *const NPY_UNUSED(dtypes[]),
+                                    PyArray_Descr *const given_descrs[],
+                                    PyArray_Descr *loop_descrs[],
+                                    npy_intp *NPY_UNUSED(view_offset))
 {
     for (int i = 0; i < 3; i++) {
         loop_descrs[i] = NULL;
     }
 
-    QuadPrecDTypeObject *descr_in1 = (QuadPrecDTypeObject *)given_descrs[0];
-    QuadPrecDTypeObject *descr_in2 = (QuadPrecDTypeObject *)given_descrs[1];
-
-    // QBLAS only supports SLEEF backend
-    if (descr_in1->backend != BACKEND_SLEEF || descr_in2->backend != BACKEND_SLEEF) {
+    QuadBackendType backend = ((QuadPrecDTypeObject *)given_descrs[0])->backend;
+    if (((QuadPrecDTypeObject *)given_descrs[1])->backend != backend ||
+        (given_descrs[2] != NULL &&
+         ((QuadPrecDTypeObject *)given_descrs[2])->backend != backend)) {
         PyErr_SetString(PyExc_NotImplementedError,
-                        "QBLAS-accelerated matmul only supports SLEEF backend. "
-                        "Please raise the issue at SwayamInSync/QBLAS for longdouble support");
+                        "QuadPrecision dot products require all operands to use the same "
+                        "backend");
         return quad_resolve_descrs_fail(loop_descrs, 3);
     }
 
-    // Both inputs must use SLEEF backend
-    QuadBackendType target_backend = BACKEND_SLEEF;
-    NPY_CASTING casting = NPY_NO_CASTING;
-
-    // Set up input descriptors
     for (int i = 0; i < 2; i++) {
         Py_INCREF(given_descrs[i]);
         loop_descrs[i] = given_descrs[i];
     }
-
-    // Set up output descriptor
     if (given_descrs[2] == NULL) {
-        loop_descrs[2] = (PyArray_Descr *)new_quaddtype_instance(target_backend);
-        if (!loop_descrs[2]) {
+        loop_descrs[2] = (PyArray_Descr *)new_quaddtype_instance(backend);
+        if (loop_descrs[2] == NULL) {
             return quad_resolve_descrs_fail(loop_descrs, 3);
         }
     }
     else {
-        QuadPrecDTypeObject *descr_out = (QuadPrecDTypeObject *)given_descrs[2];
-        if (descr_out->backend != target_backend) {
-            PyErr_SetString(PyExc_NotImplementedError,
-                        "QBLAS-accelerated matmul only supports SLEEF backend. "
-                        "Please raise the issue at SwayamInSync/QBLAS for longdouble support");
-            return quad_resolve_descrs_fail(loop_descrs, 3);
-        }
-        else {
-            Py_INCREF(given_descrs[2]);
-            loop_descrs[2] = given_descrs[2];
-        }
+        Py_INCREF(given_descrs[2]);
+        loop_descrs[2] = given_descrs[2];
     }
-    return casting;
+    return NPY_NO_CASTING;
 }
 
 enum MatmulOperationType {
@@ -163,6 +149,63 @@ matmul_scatter(char *dst, const Sleef_quad *src, npy_intp rows, npy_intp cols,
     }
 }
 
+// Inner loops may run without the GIL.
+static int
+quad_loop_fail(PyObject *exc, const char *msg)
+{
+    PyGILState_STATE gil = PyGILState_Ensure();
+    PyErr_SetString(exc, msg);
+    PyGILState_Release(gil);
+    return -1;
+}
+
+static void
+quad_dot_naive(char *ip1, npy_intp is1, char *ip2, npy_intp is2, char *op, npy_intp n,
+               QuadBackendType backend)
+{
+    if (backend == BACKEND_SLEEF) {
+        Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
+        for (npy_intp k = 0; k < n; k++, ip1 += is1, ip2 += is2) {
+            Sleef_quad a, b;
+            memcpy(&a, ip1, sizeof(Sleef_quad));
+            memcpy(&b, ip2, sizeof(Sleef_quad));
+            sum = Sleef_fmaq1_u05(a, b, sum);
+        }
+        memcpy(op, &sum, sizeof(Sleef_quad));
+    }
+    else {
+        long double sum = 0.0L;
+        for (npy_intp k = 0; k < n; k++, ip1 += is1, ip2 += is2) {
+            long double a, b;
+            memcpy(&a, ip1, sizeof(long double));
+            memcpy(&b, ip2, sizeof(long double));
+            sum += a * b;
+        }
+        quad_longdouble_store(op, sum);
+    }
+}
+
+// Requires aligned operands. QBLAS is SLEEF-only, so longdouble always takes the
+// strided loop; route it through QBLAS here once QBLAS supports it.
+static int
+quad_dot(char *ip1, npy_intp is1, char *ip2, npy_intp is2, char *op, npy_intp n,
+         QuadBackendType backend)
+{
+#ifndef DISABLE_QUADBLAS
+    if (backend == BACKEND_SLEEF && n <= INT_MAX && matmul_stride_ok(is1) &&
+        matmul_stride_ok(is2)) {
+        const npy_intp elsize = (npy_intp)sizeof(Sleef_quad);
+        if (qblas_dot((size_t)n, (Sleef_quad *)ip1, (size_t)(is1 / elsize), (Sleef_quad *)ip2,
+                      (size_t)(is2 / elsize), (Sleef_quad *)op) != 0) {
+            return quad_loop_fail(PyExc_RuntimeError, "QBLAS operation failed");
+        }
+        return 0;
+    }
+#endif
+    quad_dot_naive(ip1, is1, ip2, is2, op, n, backend);
+    return 0;
+}
+
 static int
 quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const data[],
                                  npy_intp const dimensions[], npy_intp const strides[],
@@ -183,15 +226,10 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
     npy_intp C_row_stride = strides[7];
     npy_intp C_col_stride = strides[8];
 
+    // QBLAS is SLEEF-only; longdouble takes the strided loop until QBLAS supports it.
     QuadPrecDTypeObject *descr = (QuadPrecDTypeObject *)context->descriptors[0];
-    if (descr->backend != BACKEND_SLEEF) {
-        PyErr_SetString(PyExc_NotImplementedError,
-                        "QBLAS-accelerated matmul only supports SLEEF backend. "
-                        "Please raise the issue at SwayamInSync/QBLAS for longdouble support");
-        return -1;
-    }
-
-    if (m > INT_MAX || n > INT_MAX || p > INT_MAX || m == 0 || n == 0 || p == 0) {
+    if (descr->backend != BACKEND_SLEEF || m > INT_MAX || n > INT_MAX || p > INT_MAX ||
+        m == 0 || n == 0 || p == 0) {
         return naive_matmul_strided_loop(context, data, dimensions, strides, auxdata);
     }
 
@@ -205,17 +243,9 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
     char *C_base = data[2];
 
     if (op_type == MATMUL_DOT) {
-        if (!matmul_stride_ok(A_col_stride) || !matmul_stride_ok(B_row_stride)) {
-            return naive_matmul_strided_loop(context, data, dimensions, strides, auxdata);
-        }
-        size_t incx = (size_t)(A_col_stride / elsize);
-        size_t incy = (size_t)(B_row_stride / elsize);
         for (npy_intp batch = 0; batch < N; batch++) {
-            Sleef_quad *A_ptr = (Sleef_quad *)(A_base + batch * A_stride);
-            Sleef_quad *B_ptr = (Sleef_quad *)(B_base + batch * B_stride);
-            Sleef_quad *C_ptr = (Sleef_quad *)(C_base + batch * C_stride);
-            if (qblas_dot((size_t)n, A_ptr, incx, B_ptr, incy, C_ptr) != 0) {
-                PyErr_SetString(PyExc_RuntimeError, "QBLAS operation failed");
+            if (quad_dot(A_base + batch * A_stride, A_col_stride, B_base + batch * B_stride,
+                         B_row_stride, C_base + batch * C_stride, n, BACKEND_SLEEF) < 0) {
                 return -1;
             }
         }
@@ -401,14 +431,6 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
 }
 
 static int
-quad_matmul_strided_loop_unaligned(PyArrayMethod_Context *context, char *const data[],
-                                   npy_intp const dimensions[], npy_intp const strides[],
-                                   NpyAuxData *auxdata)
-{
-    return naive_matmul_strided_loop(context, data, dimensions, strides, auxdata);
-}
-
-static int
 naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
                           npy_intp const dimensions[], npy_intp const strides[],
                           NpyAuxData *auxdata)
@@ -443,39 +465,9 @@ naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
 
         for (npy_intp i = 0; i < m; i++) {
             for (npy_intp j = 0; j < p; j++) {
-                char *C_ij = C + i * C_row_stride + j * C_col_stride;
-
-                if (backend == BACKEND_SLEEF) {
-                    Sleef_quad sum = Sleef_cast_from_doubleq1(0.0);
-
-                    for (npy_intp k = 0; k < n; k++) {
-                        char *A_ik = A + i * A_row_stride + k * A_col_stride;
-                        char *B_kj = B + k * B_row_stride + j * B_col_stride;
-
-                        Sleef_quad a_val, b_val;
-                        memcpy(&a_val, A_ik, sizeof(Sleef_quad));
-                        memcpy(&b_val, B_kj, sizeof(Sleef_quad));
-                        sum = Sleef_fmaq1_u05(a_val, b_val, sum);
-                    }
-
-                    memcpy(C_ij, &sum, sizeof(Sleef_quad));
-                }
-                else {
-                    long double sum = 0.0L;
-
-                    for (npy_intp k = 0; k < n; k++) {
-                        char *A_ik = A + i * A_row_stride + k * A_col_stride;
-                        char *B_kj = B + k * B_row_stride + j * B_col_stride;
-
-                        long double a_val, b_val;
-                        memcpy(&a_val, A_ik, sizeof(long double));
-                        memcpy(&b_val, B_kj, sizeof(long double));
-
-                        sum += a_val * b_val;
-                    }
-
-                    quad_longdouble_store(C_ij, sum);
-                }
+                quad_dot_naive(A + i * A_row_stride, A_col_stride, B + j * B_col_stride,
+                               B_row_stride, C + i * C_row_stride + j * C_col_stride, n,
+                               backend);
             }
         }
     }
@@ -483,49 +475,71 @@ naive_matmul_strided_loop(PyArrayMethod_Context *context, char *const data[],
     return 0;
 }
 
-int
-init_matmul_ops(PyObject *numpy)
+static int
+quad_vecdot_strided_loop(PyArrayMethod_Context *context, char *const data[],
+                         npy_intp const dimensions[], npy_intp const strides[],
+                         NpyAuxData *NPY_UNUSED(auxdata))
 {
-    PyObject *ufunc = PyObject_GetAttrString(numpy, "matmul");
+    QuadBackendType backend = ((QuadPrecDTypeObject *)context->descriptors[0])->backend;
+    char *ip1 = data[0], *ip2 = data[1], *op = data[2];
+
+    for (npy_intp i = 0; i < dimensions[0];
+         i++, ip1 += strides[0], ip2 += strides[1], op += strides[2]) {
+        if (quad_dot(ip1, strides[3], ip2, strides[4], op, dimensions[1], backend) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+// NumPy hands generalized ufunc loops aligned operands (copying unaligned ones),
+// so no unaligned loop is registered.
+static int
+quad_add_dot_family_loop(PyObject *numpy, const char *ufunc_name, const char *spec_name,
+                         PyArrayMethod_StridedLoop *loop)
+{
+    PyObject *ufunc = PyObject_GetAttrString(numpy, ufunc_name);
     if (ufunc == NULL) {
         return -1;
     }
 
     PyArray_DTypeMeta *dtypes[3] = {&QuadPrecDType, &QuadPrecDType, &QuadPrecDType};
-
-#ifndef DISABLE_QUADBLAS
-
     PyType_Slot slots[] = {
-            {NPY_METH_resolve_descriptors, (void *)&quad_matmul_resolve_descriptors},
-            {NPY_METH_strided_loop, (void *)&quad_matmul_strided_loop_aligned},
-            {NPY_METH_unaligned_strided_loop, (void *)&quad_matmul_strided_loop_unaligned},
+            {NPY_METH_resolve_descriptors, (void *)&quad_dot_family_resolve_descriptors},
+            {NPY_METH_strided_loop, (void *)loop},
             {0, NULL}};
-#else
-    PyType_Slot slots[] = {{NPY_METH_resolve_descriptors, (void *)&quad_matmul_resolve_descriptors},
-                           {NPY_METH_strided_loop, (void *)&naive_matmul_strided_loop},
-                           {NPY_METH_unaligned_strided_loop, (void *)&naive_matmul_strided_loop},
-                           {0, NULL}};
-#endif  // DISABLE_QUADBLAS
-
-    PyArrayMethod_Spec Spec = {
-            .name = "quad_matmul_qblas",
+    PyArrayMethod_Spec spec = {
+            .name = spec_name,
             .nin = 2,
             .nout = 1,
             .casting = NPY_NO_CASTING,
-            .flags = NPY_METH_SUPPORTS_UNALIGNED,
+            .flags = (NPY_ARRAYMETHOD_FLAGS)0,
             .dtypes = dtypes,
             .slots = slots,
     };
 
-    if (PyUFunc_AddLoopFromSpec(ufunc, &Spec) < 0) {
-        Py_DECREF(ufunc);
-        return -1;
-    }
-
-    if (quad_add_promoters(ufunc) < 0) {
-        Py_DECREF(ufunc);
-        return -1;
+    int res = PyUFunc_AddLoopFromSpec(ufunc, &spec);
+    if (res == 0) {
+        res = quad_add_promoters(ufunc);
     }
     Py_DECREF(ufunc);
-    return 0;
+    return res;
+}
+
+int
+init_matmul_ops(PyObject *numpy)
+{
+#ifndef DISABLE_QUADBLAS
+    return quad_add_dot_family_loop(numpy, "matmul", "quad_matmul_qblas",
+                                    &quad_matmul_strided_loop_aligned);
+#else
+    return quad_add_dot_family_loop(numpy, "matmul", "quad_matmul_qblas",
+                                    &naive_matmul_strided_loop);
+#endif  // DISABLE_QUADBLAS
+}
+
+int
+init_vecdot_ops(PyObject *numpy)
+{
+    return quad_add_dot_family_loop(numpy, "vecdot", "quad_vecdot", &quad_vecdot_strided_loop);
 }
