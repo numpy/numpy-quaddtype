@@ -159,6 +159,15 @@ quad_loop_fail(PyObject *exc, const char *msg)
     return -1;
 }
 
+static int
+quad_loop_no_memory(void)
+{
+    PyGILState_STATE gil = PyGILState_Ensure();
+    PyErr_NoMemory();
+    PyGILState_Release(gil);
+    return -1;
+}
+
 static void
 quad_dot_naive(char *ip1, npy_intp is1, char *ip2, npy_intp is2, char *op, npy_intp n,
                QuadBackendType backend)
@@ -294,8 +303,7 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
             PyMem_RawFree(tA);
             PyMem_RawFree(tx);
             PyMem_RawFree(ty);
-            PyErr_NoMemory();
-            return -1;
+            return quad_loop_no_memory();
         }
 
         int result = 0;
@@ -330,8 +338,7 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
         PyMem_RawFree(tx);
         PyMem_RawFree(ty);
         if (result != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "QBLAS operation failed");
-            return -1;
+            return quad_loop_fail(PyExc_RuntimeError, "QBLAS operation failed");
         }
         return 0;
     }
@@ -388,8 +395,7 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
         PyMem_RawFree(tA);
         PyMem_RawFree(tB);
         PyMem_RawFree(tC);
-        PyErr_NoMemory();
-        return -1;
+        return quad_loop_no_memory();
     }
 
     int result = 0;
@@ -424,8 +430,7 @@ quad_matmul_strided_loop_aligned(PyArrayMethod_Context *context, char *const dat
     PyMem_RawFree(tB);
     PyMem_RawFree(tC);
     if (result != 0) {
-        PyErr_SetString(PyExc_RuntimeError, "QBLAS operation failed");
-        return -1;
+        return quad_loop_fail(PyExc_RuntimeError, "QBLAS operation failed");
     }
     return 0;
 }
