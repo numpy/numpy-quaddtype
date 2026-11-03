@@ -6079,35 +6079,24 @@ class TestQuadPrecisionHash:
         quad_val = QuadPrecision(1.5, backend=backend)
         assert hash(quad_val) == hash(1.5)
 
-@pytest.mark.parametrize("src_backend,dst_backend", [
-    ("sleef", "longdouble"),
-    ("longdouble", "sleef"),
-    ("sleef", "sleef"),
-    ("longdouble", "longdouble"),
-])
+@pytest.mark.parametrize("backend", ["sleef", "longdouble"])
 @pytest.mark.parametrize("value", [
     "0.0", "-0.0", "1.0", "-1.0", "3.14159265358979323846",
     "inf", "-inf", "nan", "1e100", "1e-100", "-nan"
 ])
-def test_quad_to_quad_backend_casting(src_backend, dst_backend, value):
-    """Test casting between QuadPrecDType with different backends."""
+def test_quad_to_quad_backend_casting(backend, value):
+    """Casting within a backend is exact; across backends see test_backend_mixing.py."""
 
-    src_arr = np.array([value], dtype=QuadPrecDType(backend=src_backend))
-    dst_arr = src_arr.astype(QuadPrecDType(backend=dst_backend))
-    res_arr = np.array([value], dtype=QuadPrecDType(backend=dst_backend))
-    
-    expected_backend = 0 if dst_backend == 'sleef' else 1
-    assert dst_arr.dtype.backend == expected_backend
-    
+    src_arr = np.array([value], dtype=QuadPrecDType(backend=backend))
+    dst_arr = src_arr.astype(QuadPrecDType(backend=backend))
+    res_arr = np.array([value], dtype=QuadPrecDType(backend=backend))
+
+    assert dst_arr.dtype == QuadPrecDType(backend=backend)
     assert np.signbit(src_arr[0]) == np.signbit(dst_arr[0])
     if np.isnan(src_arr[0]):
-      assert np.isnan(dst_arr[0])
-    elif np.isinf(src_arr[0]):
-        assert np.isinf(dst_arr[0])
-    elif src_backend != dst_backend:  
-      np.testing.assert_allclose(dst_arr, res_arr, rtol=1e-15)
+        assert np.isnan(dst_arr[0])
     else:
-      np.testing.assert_array_equal(dst_arr, res_arr)
+        np.testing.assert_array_equal(dst_arr, res_arr)
 
 class TestSameValueCasting:
     """Test 'same_value' casting behavior for QuadPrecision."""
@@ -6292,15 +6281,11 @@ class TestSameValueCasting:
                 q.astype(dtype, casting="same_value")
 
     @pytest.mark.parametrize("src_backend,dst_backend", [
-    ("sleef", "longdouble"),
-    ("longdouble", "sleef"),
     ("sleef", "sleef"),
     ("longdouble", "longdouble")
     ])
     def test_quad_to_quad_same_value_casting_passing(self, src_backend, dst_backend):
-        """Test values that should roundtrip exactly between backends."""
-        # Values exactly representable in both backends (and in double, since
-        # inter-backend conversion goes through double)
+        """Test values that roundtrip exactly within a backend."""
         passing_values = [
             0.0, -0.0, 1.0, -1.0,
             0.5, 0.25, 0.125,
@@ -6321,42 +6306,6 @@ class TestSameValueCasting:
             else:
                 # compare them as float, as these values anyhow have to under double's range to work
                 assert float(result[0]) == float(src[0]), f"Value {val} failed for {src_backend} -> {dst_backend}"
-
-
-    @pytest.mark.parametrize("src_backend,dst_backend", [
-        ("sleef", "longdouble"),
-        ("longdouble", "sleef"),
-    ])
-    def test_quad_to_quad_interbackend_same_value_casting_failing(self, src_backend, dst_backend):
-        """Test values that cannot roundtrip exactly between backends.
-        
-        Inter-backend conversion goes through double, so values exceeding
-        double's precision (~53 bits mantissa) will fail same_value casting.
-        """
-        ld_info = np.finfo(np.longdouble)
-        double_info = np.finfo(np.float64)
-        
-        # Skip if longdouble has same precision as quad (PowerPC binary128)
-        # In that case, sleef <-> longdouble might use a direct path
-        if ld_info.nmant >= 112:
-            pytest.skip("longdouble has same precision as quad on this platform")
-        
-        # For longdouble -> sleef: only fails if longdouble has more precision than double
-        if src_backend == "longdouble" and ld_info.nmant <= double_info.nmant:
-            pytest.skip("longdouble has same or less precision than double on this platform")
-        
-        # Values that exceed double precision (53-bit mantissa)
-        # These will lose precision when going through the double conversion
-        failing_values = [
-            str(2**53 + 1),  # First integer not exactly representable in double
-            "3.141592653589793238462643383279502884197",  # Pi with more than double precision
-            "1.00000000000000011",  # 1 + epsilon beyond double precision
-        ]
-        
-        for val in failing_values:
-            src = np.array([val], dtype=QuadPrecDType(backend=src_backend))
-            with pytest.raises(ValueError):
-                src.astype(QuadPrecDType(backend=dst_backend), casting="same_value")
 
 
     @pytest.mark.parametrize("backend", ["sleef", "longdouble"])
