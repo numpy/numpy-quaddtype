@@ -69,79 +69,17 @@ quad_to_quad_resolve_descriptors(PyObject *NPY_UNUSED(self),
         return NPY_NO_CASTING;
     }
 
+    if (given_descrs[0]->backend != given_descrs[1]->backend) {
+        quad_set_backend_mismatch_error();
+        Py_CLEAR(loop_descrs[0]);
+        return (NPY_CASTING)-1;
+    }
+
     Py_INCREF(given_descrs[1]);
     loop_descrs[1] = given_descrs[1];
 
-    if (given_descrs[0]->backend != given_descrs[1]->backend) {
-        // Different backends require actual conversion, no view possible
-        *view_offset = NPY_MIN_INTP;
-        if (given_descrs[0]->backend == BACKEND_SLEEF) {
-            // SLEEF -> long double may lose precision
-            return static_cast<NPY_CASTING>(NPY_SAME_KIND_CASTING | NPY_SAME_VALUE_CASTING_FLAG);
-        }
-        // long double -> SLEEF preserves value exactly
-        return static_cast<NPY_CASTING>(NPY_SAFE_CASTING | NPY_SAME_VALUE_CASTING_FLAG);
-    }
-
     *view_offset = 0;
     return static_cast<NPY_CASTING>(NPY_NO_CASTING | NPY_SAME_VALUE_CASTING_FLAG);
-}
-
-// Helper function for quad-to-quad same_value check (inter-backend)
-// NOTE: the inter-backend uses `double` as intermediate,
-// so only values that can be exactly represented in double can pass same_value check
-static inline int
-quad_to_quad_same_value_check(const quad_value *in_val, QuadBackendType backend_in,
-                              const quad_value *out_val, QuadBackendType backend_out)
-{
-    // Convert output back to input backend for comparison
-    quad_value roundtrip;
-    
-    if (backend_in == BACKEND_SLEEF) {
-        // Input was SLEEF, output is longdouble
-        // Convert longdouble back to SLEEF for comparison
-        long double ld = out_val->longdouble_value;
-        if (std::isnan(ld)) {
-            // Preserve sign of NaN
-            roundtrip.sleef_value = (!ld_signbit(&ld)) ? QUAD_PRECISION_NAN : QUAD_PRECISION_NEG_NAN;
-        }
-        else if (std::isinf(ld)) {
-            roundtrip.sleef_value = (ld > 0) ? QUAD_PRECISION_INF : QUAD_PRECISION_NINF;
-        }
-        else {
-            Sleef_quad temp = Sleef_cast_from_doubleq1(static_cast<double>(ld));
-            memcpy(&roundtrip.sleef_value, &temp, sizeof(Sleef_quad));
-        }
-        
-        // Compare in SLEEF domain && signbit preserved
-        bool is_sign_preserved = (quad_signbit(&in_val->sleef_value) == quad_signbit(&roundtrip.sleef_value));
-        if(quad_isnan(&in_val->sleef_value) && quad_isnan(&roundtrip.sleef_value) && is_sign_preserved)
-            return 1;  // Both NaN
-        if (Sleef_icmpeqq1(in_val->sleef_value, roundtrip.sleef_value) && is_sign_preserved)
-            return 1;  // Equal
-    }
-    else {
-        // Input was longdouble, output is SLEEF
-        // Convert SLEEF back to longdouble for comparison
-        roundtrip.longdouble_value = static_cast<long double>(cast_sleef_to_double(out_val->sleef_value));
-        
-        // Compare in longdouble domain && signbit preserved
-        bool is_sign_preserved = (ld_signbit(&in_val->longdouble_value) == ld_signbit(&roundtrip.longdouble_value));
-        if ((std::isnan(in_val->longdouble_value) && std::isnan(roundtrip.longdouble_value)) && is_sign_preserved)
-            return 1;
-        if ((in_val->longdouble_value == roundtrip.longdouble_value) && is_sign_preserved)
-            return 1;
-    }
-    
-    // Values don't match
-    Sleef_quad sleef_val = quad_to_sleef_quad(in_val, backend_in);
-    const char *val_str = quad_to_string_adaptive_cstr(&sleef_val, QUAD_STR_WIDTH);
-    if (val_str != NULL) {
-        PyErr_Format(PyExc_ValueError,
-                     "QuadPrecision value '%s' cannot be represented exactly in target backend",
-                     val_str);
-    }
-    return -1;
 }
 
 template <bool Aligned>
@@ -156,62 +94,13 @@ quad_to_quad_strided_loop(PyArrayMethod_Context *context, char *const data[],
     npy_intp in_stride = strides[0];
     npy_intp out_stride = strides[1];
 
-    QuadPrecDTypeObject *descr_in = (QuadPrecDTypeObject *)context->descriptors[0];
-    QuadPrecDTypeObject *descr_out = (QuadPrecDTypeObject *)context->descriptors[1];
-    QuadBackendType backend_in = descr_in->backend;
-    QuadBackendType backend_out = descr_out->backend;
-    int same_value_casting = ((context->flags & NPY_SAME_VALUE_CONTEXT_FLAG) == NPY_SAME_VALUE_CONTEXT_FLAG);
+    // The resolver only accepts casts within one backend.
+    QuadBackendType backend = ((QuadPrecDTypeObject *)context->descriptors[0])->backend;
 
-    // inter-backend casting
-    if (backend_in != backend_out) {
-        while (N--) {
-            quad_value in_val;
-            load_quad<Aligned>(in_ptr, backend_in, &in_val);
-            quad_value out_val;
-            if (backend_in == BACKEND_SLEEF) 
-            {
-              out_val.longdouble_value = static_cast<long double>(cast_sleef_to_double(in_val.sleef_value));
-            }
-            else 
-            {
-              long double ld = in_val.longdouble_value;
-              if (std::isnan(ld)) {
-                  out_val.sleef_value = (!ld_signbit(&ld)) ? QUAD_PRECISION_NAN : QUAD_PRECISION_NEG_NAN;
-              }
-              else if (std::isinf(ld)) {
-                  out_val.sleef_value = (ld > 0) ? QUAD_PRECISION_INF : QUAD_PRECISION_NINF;
-              }
-              else 
-              {
-                  // to prevent compiler optimizations, ABI handling issues with __float128 on x86-64 machines
-                  // won't be expensive as for fixed size compiler can optimize memcpy with movq
-                  Sleef_quad temp = Sleef_cast_from_doubleq1(static_cast<double>(ld));
-                  std::memcpy(&out_val.sleef_value, &temp, sizeof(Sleef_quad));
-              }
-            }
-            
-            // check same_value for inter-backend casts
-            if(same_value_casting)
-            {
-              int ret = quad_to_quad_same_value_check(&in_val, backend_in, &out_val, backend_out);
-              if (ret < 0) {
-                  return -1;
-              }
-            }
-
-            store_quad<Aligned>(out_ptr, &out_val, backend_out);
-            in_ptr += in_stride;
-            out_ptr += out_stride;
-        }
-        return 0;
-    }
-
-    // same backend: direct copy
-    // same_value casting not needed here as values are identical
     while(N--) {
         quad_value val;
-        load_quad<Aligned>(in_ptr, backend_in, &val);
-        store_quad<Aligned>(out_ptr, &val, backend_out);
+        load_quad<Aligned>(in_ptr, backend, &val);
+        store_quad<Aligned>(out_ptr, &val, backend);
         in_ptr += in_stride;
         out_ptr += out_stride;
     }
