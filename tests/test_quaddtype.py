@@ -6079,35 +6079,29 @@ class TestQuadPrecisionHash:
         quad_val = QuadPrecision(1.5, backend=backend)
         assert hash(quad_val) == hash(1.5)
 
-@pytest.mark.parametrize("src_backend,dst_backend", [
-    ("sleef", "longdouble"),
-    ("longdouble", "sleef"),
-    ("sleef", "sleef"),
-    ("longdouble", "longdouble"),
-])
+@pytest.mark.parametrize("backend", ["sleef", "longdouble"])
 @pytest.mark.parametrize("value", [
     "0.0", "-0.0", "1.0", "-1.0", "3.14159265358979323846",
     "inf", "-inf", "nan", "1e100", "1e-100", "-nan"
 ])
-def test_quad_to_quad_backend_casting(src_backend, dst_backend, value):
-    """Test casting between QuadPrecDType with different backends."""
+def test_quad_to_quad_backend_casting(backend, value):
+    """Casting within a backend is exact; across backends see test_backend_mixing.py."""
 
-    src_arr = np.array([value], dtype=QuadPrecDType(backend=src_backend))
-    dst_arr = src_arr.astype(QuadPrecDType(backend=dst_backend))
-    res_arr = np.array([value], dtype=QuadPrecDType(backend=dst_backend))
-    
-    expected_backend = 0 if dst_backend == 'sleef' else 1
-    assert dst_arr.dtype.backend == expected_backend
-    
+    src_arr = np.array([value], dtype=QuadPrecDType(backend=backend))
+    dst_arr = src_arr.astype(QuadPrecDType(backend=backend))
+    res_arr = np.array([value], dtype=QuadPrecDType(backend=backend))
+
+    assert dst_arr.dtype == QuadPrecDType(backend=backend)
     assert np.signbit(src_arr[0]) == np.signbit(dst_arr[0])
     if np.isnan(src_arr[0]):
-      assert np.isnan(dst_arr[0])
-    elif np.isinf(src_arr[0]):
-        assert np.isinf(dst_arr[0])
-    elif src_backend != dst_backend:  
-      np.testing.assert_allclose(dst_arr, res_arr, rtol=1e-15)
+        assert np.isnan(dst_arr[0])
     else:
-      np.testing.assert_array_equal(dst_arr, res_arr)
+        np.testing.assert_array_equal(dst_arr, res_arr)
+
+CROSS_BACKEND_CAST_REFUSED = pytest.mark.xfail(
+    raises=TypeError, strict=True, reason="gh-112: casts between backends are refused"
+)
+
 
 class TestSameValueCasting:
     """Test 'same_value' casting behavior for QuadPrecision."""
@@ -6292,8 +6286,8 @@ class TestSameValueCasting:
                 q.astype(dtype, casting="same_value")
 
     @pytest.mark.parametrize("src_backend,dst_backend", [
-    ("sleef", "longdouble"),
-    ("longdouble", "sleef"),
+    pytest.param("sleef", "longdouble", marks=CROSS_BACKEND_CAST_REFUSED),
+    pytest.param("longdouble", "sleef", marks=CROSS_BACKEND_CAST_REFUSED),
     ("sleef", "sleef"),
     ("longdouble", "longdouble")
     ])
@@ -6323,6 +6317,7 @@ class TestSameValueCasting:
                 assert float(result[0]) == float(src[0]), f"Value {val} failed for {src_backend} -> {dst_backend}"
 
 
+    @CROSS_BACKEND_CAST_REFUSED
     @pytest.mark.parametrize("src_backend,dst_backend", [
         ("sleef", "longdouble"),
         ("longdouble", "sleef"),

@@ -32,17 +32,9 @@ quad_binary_op_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const dtyp
 
     QuadPrecDTypeObject *descr_in1 = (QuadPrecDTypeObject *)given_descrs[0];
     QuadPrecDTypeObject *descr_in2 = (QuadPrecDTypeObject *)given_descrs[1];
-    QuadBackendType target_backend;
-
-    // Determine target backend and if casting is needed
-    NPY_CASTING casting = NPY_NO_CASTING;
-    if (descr_in1->backend != descr_in2->backend) {
-        target_backend = BACKEND_LONGDOUBLE;
-        casting = NPY_SAFE_CASTING;
-    }
-    else {
-        target_backend = descr_in1->backend;
-    }
+    QuadBackendType target_backend = quad_loop_backend(given_descrs, 2);
+    NPY_CASTING casting = (descr_in1->backend == descr_in2->backend) ? NPY_NO_CASTING
+                                                                     : NPY_SAFE_CASTING;
 
     // Set up input descriptors, casting if necessary
     for (int i = 0; i < 2; i++) {
@@ -161,17 +153,9 @@ quad_binary_op_2out_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const
 
     QuadPrecDTypeObject *descr_in1 = (QuadPrecDTypeObject *)given_descrs[0];
     QuadPrecDTypeObject *descr_in2 = (QuadPrecDTypeObject *)given_descrs[1];
-    QuadBackendType target_backend;
-
-    // Determine target backend and if casting is needed
-    NPY_CASTING casting = NPY_NO_CASTING;
-    if (descr_in1->backend != descr_in2->backend) {
-        target_backend = BACKEND_LONGDOUBLE;
-        casting = NPY_SAFE_CASTING;
-    }
-    else {
-        target_backend = descr_in1->backend;
-    }
+    QuadBackendType target_backend = quad_loop_backend(given_descrs, 2);
+    NPY_CASTING casting = (descr_in1->backend == descr_in2->backend) ? NPY_NO_CASTING
+                                                                     : NPY_SAFE_CASTING;
 
     // Set up input descriptors, casting if necessary
     for (int i = 0; i < 2; i++) {

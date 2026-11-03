@@ -137,7 +137,8 @@ jobs:
               python -m pip install --break-system-packages --no-deps . -v --no-build-isolation --force-reinstall &&
               
               # Install test dependencies separately
-              python -m pip install --break-system-packages .[test] &&
+              # pandas 3.1.0 fails to build on s390x: pandas-dev/pandas#71548
+              python -m pip install --break-system-packages .[test] pandas!=3.1.0 &&
               
               python -m pytest -vvv --color=yes --timeout=600 --tb=short tests/
             '"

@@ -29,22 +29,7 @@ quad_unary_op_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const dtype
     Py_INCREF(given_descrs[0]);
     loop_descrs[0] = given_descrs[0];
 
-    if (given_descrs[1] == NULL) {
-        Py_INCREF(given_descrs[0]);
-        loop_descrs[1] = given_descrs[0];
-    }
-    else {
-        Py_INCREF(given_descrs[1]);
-        loop_descrs[1] = given_descrs[1];
-    }
-
-    QuadPrecDTypeObject *descr_in = (QuadPrecDTypeObject *)given_descrs[0];
-    QuadPrecDTypeObject *descr_out = (QuadPrecDTypeObject *)loop_descrs[1];
-
-    if (descr_in->backend != descr_out->backend) {
-        return NPY_UNSAFE_CASTING;
-    }
-
+    loop_descrs[1] = quad_out_loop_descr(given_descrs[0], given_descrs[1]);
     return NPY_NO_CASTING;
 }
 
@@ -288,26 +273,9 @@ quad_unary_op_2out_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const 
     Py_INCREF(given_descrs[0]);
     loop_descrs[0] = given_descrs[0];
 
-    // Output descriptors (2 outputs)
     for (int i = 1; i < 3; i++) {
-        if (given_descrs[i] == NULL) {
-            Py_INCREF(given_descrs[0]);
-            loop_descrs[i] = given_descrs[0];
-        }
-        else {
-            Py_INCREF(given_descrs[i]);
-            loop_descrs[i] = given_descrs[i];
-        }
+        loop_descrs[i] = quad_out_loop_descr(given_descrs[0], given_descrs[i]);
     }
-
-    QuadPrecDTypeObject *descr_in = (QuadPrecDTypeObject *)given_descrs[0];
-    QuadPrecDTypeObject *descr_out1 = (QuadPrecDTypeObject *)loop_descrs[1];
-    QuadPrecDTypeObject *descr_out2 = (QuadPrecDTypeObject *)loop_descrs[2];
-
-    if (descr_in->backend != descr_out1->backend || descr_in->backend != descr_out2->backend) {
-        return NPY_UNSAFE_CASTING;
-    }
-
     return NPY_NO_CASTING;
 }
 
@@ -442,14 +410,7 @@ quad_frexp_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const dtypes[]
     loop_descrs[0] = given_descrs[0];
 
     // Output 1: mantissa (same dtype as input)
-    if (given_descrs[1] == NULL) {
-        Py_INCREF(given_descrs[0]);
-        loop_descrs[1] = given_descrs[0];
-    }
-    else {
-        Py_INCREF(given_descrs[1]);
-        loop_descrs[1] = given_descrs[1];
-    }
+    loop_descrs[1] = quad_out_loop_descr(given_descrs[0], given_descrs[1]);
 
     // Output 2: exponent (int32)
     if (given_descrs[2] == NULL) {
@@ -462,14 +423,6 @@ quad_frexp_resolve_descriptors(PyObject *self, PyArray_DTypeMeta *const dtypes[]
         Py_INCREF(given_descrs[2]);
         loop_descrs[2] = given_descrs[2];
     }
-
-    QuadPrecDTypeObject *descr_in = (QuadPrecDTypeObject *)given_descrs[0];
-    QuadPrecDTypeObject *descr_out1 = (QuadPrecDTypeObject *)loop_descrs[1];
-
-    if (descr_in->backend != descr_out1->backend) {
-        return NPY_UNSAFE_CASTING;
-    }
-
     return NPY_NO_CASTING;
 }
 

@@ -73,14 +73,9 @@ quad_to_quad_resolve_descriptors(PyObject *NPY_UNUSED(self),
     loop_descrs[1] = given_descrs[1];
 
     if (given_descrs[0]->backend != given_descrs[1]->backend) {
-        // Different backends require actual conversion, no view possible
-        *view_offset = NPY_MIN_INTP;
-        if (given_descrs[0]->backend == BACKEND_SLEEF) {
-            // SLEEF -> long double may lose precision
-            return static_cast<NPY_CASTING>(NPY_SAME_KIND_CASTING | NPY_SAME_VALUE_CASTING_FLAG);
-        }
-        // long double -> SLEEF preserves value exactly
-        return static_cast<NPY_CASTING>(NPY_SAFE_CASTING | NPY_SAME_VALUE_CASTING_FLAG);
+        // gh-112: the loop already handles cross-backend casts; allow them here once they are exact.
+        quad_set_backend_mismatch_error();
+        return quad_resolve_descrs_fail((PyArray_Descr **)loop_descrs, 2);
     }
 
     *view_offset = 0;
