@@ -255,8 +255,9 @@ class TestStillSupported:
         assert np.sqrt(a, out=_arr([0, 0], backend)).dtype == dt
 
     def test_constructor_copies_exactly(self, backend):
-        tiny = QuadPrecision(2.0, backend=backend) ** -60
-        value = QuadPrecision(1, backend=backend) + tiny
+        nmant = 112 if backend == "sleef" else np.finfo(np.longdouble).nmant
+        eps = QuadPrecision(2.0, backend=backend) ** -nmant
+        value = QuadPrecision(1, backend=backend) + eps
         assert value != QuadPrecision(1, backend=backend)
         copy = QuadPrecision(value, backend=backend)
         assert copy == value
