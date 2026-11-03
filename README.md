@@ -266,10 +266,12 @@ git clean -ffxd
 #### Backwards-incompatible changes
 
 - Values no longer move between the SLEEF and longdouble backends. Every
-  operation that would combine or convert them now raises
-  `TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble'`.
-  Previously these silently converted through `float64` (losing precision)
-  or picked a backend inconsistently. This covers:
+  operation that would combine or convert them now raises `TypeError`, with
+  the message `Cannot mix QuadPrecision backends 'sleef' and 'longdouble'`,
+  or NumPy's own `Cannot cast ...` message where NumPy checks the casting
+  rule first (for example `astype(..., casting="same_kind")`). Previously
+  these silently converted through `float64` (losing precision) or picked a
+  backend inconsistently. This covers:
   - ufuncs with operands or `out=` arrays of different backends (before:
     arithmetic and comparisons silently used longdouble);
   - `astype`, `np.copyto`, slice and item assignment between backends
