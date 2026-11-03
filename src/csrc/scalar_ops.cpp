@@ -19,6 +19,7 @@ extern "C" {
 #include "ops.hpp"
 #include "scalar_ops.h"
 #include "quad_common.h"
+#include "dtype.h"
 #include "constants.hpp"
 
 template <unary_op_quad_def sleef_op, unary_op_longdouble_def longdouble_op>
@@ -77,7 +78,7 @@ quad_binary_func(PyObject *op1, PyObject *op2)
         Py_INCREF(other);
         other_quad = (QuadPrecisionObject *)other;
         if (other_quad->backend != backend) {
-            PyErr_SetString(PyExc_TypeError, "Cannot mix QuadPrecision backends");
+            quad_set_backend_mismatch_error();
             Py_DECREF(other_quad);
             Py_DECREF(other);
             return NULL;
@@ -138,11 +139,7 @@ quad_richcompare(QuadPrecisionObject *self, PyObject *other, int cmp_op)
         Py_INCREF(other);
         other_quad = (QuadPrecisionObject *)other;
         if (other_quad->backend != backend) {
-            // we could allow, but this will be bad
-            // Two values that are different in quad precision, 
-            // might appear equal when converted to double.
-            PyErr_SetString(PyExc_TypeError,
-                            "Cannot compare QuadPrecision objects with different backends");
+            quad_set_backend_mismatch_error();
             Py_DECREF(other_quad);
             return NULL;
         }
