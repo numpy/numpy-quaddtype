@@ -162,11 +162,11 @@ array([2.5, 3.5], dtype=QuadPrecDType(backend='longdouble'))
 >>> ld + 1
 Traceback (most recent call last):
   ...
-TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble' (Python int and float operands use 'sleef')
+TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble'
 >>> ld.astype(QuadPrecDType())
 Traceback (most recent call last):
   ...
-TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble' (Python int and float operands use 'sleef')
+TypeError: Cannot mix QuadPrecision backends 'sleef' and 'longdouble'
 ```
 
 ## Convenience Functions
