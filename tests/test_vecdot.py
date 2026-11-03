@@ -105,6 +105,23 @@ def test_outer_dimensions_broadcast(backend, x_shape, y_shape):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("x_shape,y_shape", [((0, 5), (0, 5)), ((2, 0, 5), (5,))])
+def test_empty_outer_dimension(backend, x_shape, y_shape):
+    dtype = QuadPrecDType(backend=backend)
+    result = np.vecdot(np.empty(x_shape, dtype), np.empty(y_shape, dtype))
+    assert result.shape == np.broadcast_shapes(x_shape, y_shape)[:-1]
+    assert result.dtype == dtype
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_axis_on_3d(backend):
+    x = np.arange(24.0).reshape(2, 3, 4)
+    y = x[::-1] + 1
+    result = np.vecdot(_quad(x, backend), _quad(y, backend), axis=1)
+    _assert_vecdot(result, x, y, backend, axis=1)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_axes_and_keepdims(backend):
     x = np.arange(6.0).reshape(2, 3)
     y = np.arange(6.0).reshape(3, 2)
@@ -129,6 +146,40 @@ def test_out(backend, out_layout):
     result = np.vecdot(_quad(x, backend), _quad(y, backend), out=out)
     assert result is out
     _assert_vecdot(out, x, y, backend)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_out_overlapping_input(backend):
+    x = _quad(np.arange(9.0).reshape(3, 3), backend)
+    expected = np.vecdot(x, x.copy())
+    out = x[:, 0]
+    assert np.vecdot(x, x, out=out) is out
+    np.testing.assert_array_equal(x[:, 0], expected)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_out_wrong_shape(backend):
+    dtype = QuadPrecDType(backend=backend)
+    with pytest.raises(ValueError, match="could not be broadcast"):
+        np.vecdot(_quad([[1, 2], [3, 4]], backend), _quad([3, 4], backend),
+                  out=np.empty(3, dtype))
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_subclass_is_preserved(backend):
+    class Sub(np.ndarray):
+        pass
+
+    result = np.vecdot(_quad([[1, 2]], backend).view(Sub), _quad([3, 4], backend))
+    assert type(result) is Sub
+
+
+def test_dtype_and_signature():
+    q, f = _quad([1, 2], "sleef"), np.array([3.0, 4.0])
+    assert np.vecdot(q, f, dtype=QuadPrecDType) == QuadPrecision(11)
+    assert np.vecdot(q, q, signature=(QuadPrecDType,) * 3) == QuadPrecision(5)
+    result = np.vecdot(q, q, dtype=np.float64)
+    assert result.dtype == np.float64 and result == 5.0
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
