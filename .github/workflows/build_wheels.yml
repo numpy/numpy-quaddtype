@@ -60,7 +60,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-14, macos-15, macos-15-intel]
+        os: [macos-15, macos-15-intel]
 
     steps:
       - uses: actions/checkout@v6
@@ -72,13 +72,20 @@ jobs:
 
       - name: Install dependencies
         run: |
-          packages="cmake libomp git"
+          packages="cmake git"
           echo "Remove preinstalled dependencies"
           for pkg in $packages; do
             brew uninstall --ignore-dependencies $pkg 2>/dev/null || true
           done
           brew cleanup
           brew install $packages
+
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3.0.0
+        with:
+          micromamba-version: "2.8.1-0"
+
+      - name: Configure macOS build environment
+        run: bash tools/ci/configure_macos_env.sh
 
       - name: Installing Python dependencies
         run: |
@@ -92,8 +99,6 @@ jobs:
           CIBW_ENABLE: cpython-prerelease cpython-freethreading
           # CIBW_ARCHS_MACOS: ${{ matrix.os == 'macos-13' && 'x86_64' || 'arm64' }}
           CIBW_BUILD_VERBOSITY: "3"
-          CIBW_ENVIRONMENT: >
-            MACOSX_DEPLOYMENT_TARGET="${{ matrix.os == 'macos-14' && '14.0' || '15.0' }}"
           CIBW_REPAIR_WHEEL_COMMAND: >
             delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
           CIBW_TEST_COMMAND: |
@@ -108,6 +113,9 @@ jobs:
           CIBW_TEST_EXTRAS: "test"
         run: |
           python -m cibuildwheel --output-dir wheelhouse
+
+      - name: Check bundled libomp
+        run: python tools/ci/check_macos_wheels.py wheelhouse/*.whl
 
       - uses: actions/upload-artifact@v7
         with:
