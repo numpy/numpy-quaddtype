@@ -161,8 +161,9 @@ NumPy QuadDType supports a comprehensive set of NumPy universal functions (ufunc
 
 Both backends are supported. With the SLEEF backend, aligned operands with
 BLAS-compatible strides use QuadBLAS; other operands, the longdouble backend,
-and builds without QuadBLAS (including Windows) use a strided loop. All
-operands must use the same backend.
+and builds without QuadBLAS (including Windows) use a strided loop. As with
+the elementwise ufuncs, operands of different backends are computed in the
+longdouble backend.
 
 ## Type Conversion
 
