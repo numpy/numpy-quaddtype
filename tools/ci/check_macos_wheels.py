@@ -8,7 +8,7 @@ import zipfile
 LC_BUILD_VERSION = 0x32
 
 
-def macos_minimum(dylib):
+def macos_minimum(dylib: bytes) -> tuple[int, int]:
     ncmds = struct.unpack_from("<I", dylib, 16)[0]
     offset = 32
     for _ in range(ncmds):
