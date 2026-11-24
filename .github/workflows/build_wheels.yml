@@ -60,7 +60,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-14, macos-15, macos-15-intel]
+        include:
+          - os: macos-15
+            deployment_target: "14.0"
+          - os: macos-15-intel
+            deployment_target: "15.0"
 
     steps:
       - uses: actions/checkout@v6
@@ -93,7 +97,7 @@ jobs:
           # CIBW_ARCHS_MACOS: ${{ matrix.os == 'macos-13' && 'x86_64' || 'arm64' }}
           CIBW_BUILD_VERBOSITY: "3"
           CIBW_ENVIRONMENT: >
-            MACOSX_DEPLOYMENT_TARGET="${{ matrix.os == 'macos-14' && '14.0' || '15.0' }}"
+            MACOSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}"
           CIBW_REPAIR_WHEEL_COMMAND: >
             delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
           CIBW_TEST_COMMAND: |
