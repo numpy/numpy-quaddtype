@@ -163,7 +163,9 @@ Both backends are supported. With the SLEEF backend, aligned operands with
 BLAS-compatible strides use QuadBLAS; other operands, the longdouble backend,
 and builds without QuadBLAS (including Windows) use a strided loop. As with
 the elementwise ufuncs, operands of different backends are computed in the
-longdouble backend.
+longdouble backend. Converting between backends currently goes through
+`float64`, so a SLEEF operand, or a result written to an `out=` of the other
+backend, keeps only double precision.
 
 ## Type Conversion
 
