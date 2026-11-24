@@ -1301,3 +1301,16 @@ class TestMatmulCopyPath:
         assert out.shape == (7,)
         for i in range(7):
             assert abs(float(out[i]) - ref[i]) <= 1e-13 + 1e-13 * max(abs(ref[i]), 1.0)
+
+
+def test_gather_buffer_out_of_memory_raises():
+    """A broadcast matrix is copied before QBLAS; a failed allocation must raise, not crash."""
+    import numpy_quaddtype
+    try:
+        numpy_quaddtype.get_quadblas_version()
+    except NotImplementedError:
+        pytest.skip("without QuadBLAS the naive loop runs instead")
+    n = 2**23
+    A = np.broadcast_to(np.ones((), QuadPrecDType()), (n, n))
+    with pytest.raises(MemoryError):
+        A @ np.ones(n, QuadPrecDType())
