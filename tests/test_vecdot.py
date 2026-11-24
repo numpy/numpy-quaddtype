@@ -225,6 +225,15 @@ def test_special_values(backend, x, y, expected):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("n", [1, 2, 40])
+def test_negative_zero_products_sum_to_positive_zero(backend, n):
+    result = np.vecdot(_quad([-0.0] * n, backend), _quad([1.0] * n, backend))
+    expected = np.vecdot(np.full(n, -0.0), np.ones(n))
+    assert result == 0
+    assert np.signbit(np.float64(result)) == np.signbit(expected) == False
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_cancellation_beyond_float64(backend):
     x, y = [2.0**100, 1.0, -(2.0**100)], [1.0, 1.0, 1.0]
     result = np.vecdot(_quad(x, backend), _quad(y, backend))
