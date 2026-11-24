@@ -60,15 +60,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        include:
-          - os: macos-15
-            deployment_target: "14.0"
-            openmp_url: https://conda.anaconda.org/conda-forge/osx-arm64/llvm-openmp-23.1.6-hdb3d66b_0.conda
-            openmp_sha256: b777843f1ced814ea99adf79ece75947ef70ed1570e7c3bf5b5633133a496b9b
-          - os: macos-15-intel
-            deployment_target: "15.0"
-            openmp_url: https://conda.anaconda.org/conda-forge/osx-64/llvm-openmp-23.1.6-h8c1e6b9_0.conda
-            openmp_sha256: d458fdf3a2ec34ba44f20c79ed9d10301d80fa7b48323d29a0fe5567305b8aee
+        os: [macos-15, macos-15-intel]
 
     steps:
       - uses: actions/checkout@v6
@@ -82,33 +74,18 @@ jobs:
         run: |
           packages="cmake git"
           echo "Remove preinstalled dependencies"
-          for pkg in $packages libomp; do
+          for pkg in $packages; do
             brew uninstall --ignore-dependencies $pkg 2>/dev/null || true
           done
           brew cleanup
           brew install $packages
 
-      # Homebrew's libomp is built for the runner's macOS, so bundling it would raise the wheels'
-      # minimum macOS. Use conda-forge's llvm-openmp (built for macOS 11) instead, as scikit-learn does.
-      # Meson looks for libomp only under `brew --prefix libomp` or this fallback path.
-      - name: Install libomp from conda-forge
-        run: |
-          python -m pip install zstandard
-          curl -sSfL -o "$RUNNER_TEMP/llvm-openmp.conda" "${{ matrix.openmp_url }}"
-          echo "${{ matrix.openmp_sha256 }}  $RUNNER_TEMP/llvm-openmp.conda" | shasum -a 256 -c -
-          python - "$RUNNER_TEMP/llvm-openmp.conda" "$RUNNER_TEMP/llvm-openmp" <<'PY'
-          import io, sys, tarfile, zipfile, zstandard
-          with zipfile.ZipFile(sys.argv[1]) as z:
-              name = next(n for n in z.namelist() if n.startswith("pkg-") and n.endswith(".tar.zst"))
-              stream = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(z.read(name)))
-              with tarfile.open(fileobj=stream, mode="r|") as t:
-                  t.extractall(sys.argv[2], filter="data")
-          PY
-          OMP_ROOT="$(brew --prefix)/opt/libomp"
-          rm -rf "$OMP_ROOT"
-          ln -s "$RUNNER_TEMP/llvm-openmp" "$OMP_ROOT"
-          ls -l "$OMP_ROOT/include/omp.h" "$OMP_ROOT/lib/libomp.dylib"
-          echo "OMP_ROOT=$OMP_ROOT" >> "$GITHUB_ENV"
+      - uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3.0.0
+        with:
+          micromamba-version: "2.8.1-0"
+
+      - name: Configure macOS build environment
+        run: bash tools/ci/configure_macos_env.sh
 
       - name: Installing Python dependencies
         run: |
@@ -122,9 +99,6 @@ jobs:
           CIBW_ENABLE: cpython-prerelease cpython-freethreading
           # CIBW_ARCHS_MACOS: ${{ matrix.os == 'macos-13' && 'x86_64' || 'arm64' }}
           CIBW_BUILD_VERBOSITY: "3"
-          CIBW_ENVIRONMENT: >
-            MACOSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}"
-            LDFLAGS="-Wl,-rpath,${{ env.OMP_ROOT }}/lib"
           CIBW_REPAIR_WHEEL_COMMAND: >
             delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
           CIBW_TEST_COMMAND: |
@@ -141,32 +115,7 @@ jobs:
           python -m cibuildwheel --output-dir wheelhouse
 
       - name: Check bundled libomp
-        run: |
-          python - "${{ matrix.deployment_target }}" wheelhouse/*.whl <<'PY'
-          import struct, sys, zipfile
-
-          def macos_minimum(data):
-              ncmds = struct.unpack_from("<I", data, 16)[0]
-              offset = 32
-              for _ in range(ncmds):
-                  cmd, size = struct.unpack_from("<II", data, offset)
-                  if cmd == 0x32:  # LC_BUILD_VERSION
-                      v = struct.unpack_from("<I", data, offset + 12)[0]
-                      return (v >> 16, (v >> 8) & 0xFF)
-                  offset += size
-              raise SystemExit("no LC_BUILD_VERSION")
-
-          target = tuple(int(x) for x in sys.argv[1].split("."))
-          tag = f"macosx_{target[0]}_{target[1]}_"
-          for wheel in sys.argv[2:]:
-              with zipfile.ZipFile(wheel) as z:
-                  libomp = [n for n in z.namelist() if n.endswith(".dylibs/libomp.dylib")]
-                  assert libomp, f"{wheel}: libomp.dylib is not bundled, so QBLAS was built without OpenMP"
-                  minimum = macos_minimum(z.read(libomp[0]))
-              assert minimum <= target, f"{wheel}: bundled libomp needs macOS {minimum}"
-              assert tag in wheel, f"{wheel}: expected a {tag} wheel"
-              print(f"{wheel}: libomp needs macOS {minimum[0]}.{minimum[1]}")
-          PY
+        run: python tools/ci/check_macos_wheels.py wheelhouse/*.whl
 
       - uses: actions/upload-artifact@v7
         with:
