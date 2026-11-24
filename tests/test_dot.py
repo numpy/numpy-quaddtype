@@ -496,23 +496,38 @@ class TestOutKeyword:
 
 
 class TestMixedBackend:
-    """Mixed-backend matmul is rejected until inter-backend promotion is
-    defined (gh-113)."""
+    """Mixed backends follow the elementwise binary ufuncs: differing inputs run in longdouble."""
 
     @pytest.mark.parametrize("backend_a,backend_b,backend_out", [
         ("sleef",      "longdouble", None),
         ("longdouble", "sleef",      None),
         ("sleef",      "sleef",      "longdouble"),
         ("longdouble", "longdouble", "sleef"),
+        ("sleef",      "longdouble", "sleef"),
     ])
-    def test_mixed_backend_raises(self, backend_a, backend_b, backend_out):
-        A = np.zeros((2, 3), dtype=QuadPrecDType(backend=backend_a))
-        B = np.zeros((3, 2), dtype=QuadPrecDType(backend=backend_b))
-        kwargs = {}
-        if backend_out is not None:
-            kwargs["out"] = np.zeros((2, 2), dtype=QuadPrecDType(backend=backend_out))
-        with pytest.raises(NotImplementedError, match="same backend"):
-            np.matmul(A, B, **kwargs)
+    def test_mixed_backend_matches_elementwise_rule(self, backend_a, backend_b, backend_out):
+        A = np.arange(6).reshape(2, 3).astype(QuadPrecDType(backend=backend_a))
+        B = np.arange(6).reshape(3, 2).astype(QuadPrecDType(backend=backend_b))
+        loop = (A[:1, :1] * B[:1, :1]).dtype
+        expected = np.matmul(A.astype(loop), B.astype(loop))
+        if backend_out is None:
+            result = np.matmul(A, B)
+        else:
+            out = np.zeros((2, 2), dtype=QuadPrecDType(backend=backend_out))
+            result = np.matmul(A, B, out=out)
+            assert result is out
+            expected = expected.astype(out.dtype)
+        np.testing.assert_array_equal(result, expected, strict=True)
+
+    @pytest.mark.parametrize("quad_first", [True, False])
+    def test_longdouble_with_float64_operand(self, quad_first):
+        quad = np.arange(6).reshape(2, 3).astype(QuadPrecDType(backend="longdouble"))
+        other = np.arange(6.0).reshape(3, 2)
+        a, b = (quad, other) if quad_first else (other.T, quad.T)
+        expected = np.matmul(a.astype(np.longdouble), b.astype(np.longdouble))
+        result = np.matmul(a, b)
+        assert result.dtype == QuadPrecDType(backend="longdouble")
+        np.testing.assert_array_equal(result.astype(np.longdouble), expected)
 
 
 class TestMatmulLongdoubleBackend:
