@@ -276,23 +276,31 @@ def test_object_operand_uses_object_loop(quad_first):
     ("longdouble", "sleef", None),
     ("sleef", "sleef", "longdouble"),
     ("longdouble", "longdouble", "sleef"),
+    ("sleef", "longdouble", "sleef"),
 ])
-def test_mixed_backends_raise(x_backend, y_backend, out_backend):
-    kwargs = {}
-    if out_backend is not None:
-        kwargs["out"] = np.empty((), dtype=QuadPrecDType(backend=out_backend))
-    with pytest.raises(NotImplementedError, match="same backend"):
-        np.vecdot(_quad([1, 2], x_backend), _quad([3, 4], y_backend), **kwargs)
+def test_mixed_backends_match_elementwise_rule(x_backend, y_backend, out_backend):
+    x, y = _quad([1, 2], x_backend), _quad([3, 4], y_backend)
+    loop = (x * y).dtype
+    expected = np.vecdot(x.astype(loop), y.astype(loop))
+    if out_backend is None:
+        result = np.vecdot(x, y)
+        assert result.dtype == loop
+    else:
+        out = np.empty((), dtype=QuadPrecDType(backend=out_backend))
+        result = np.vecdot(x, y, out=out)
+        assert result is out
+        expected = np.asarray(expected).astype(out.dtype)
+    assert result == expected
 
 
 @pytest.mark.parametrize("quad_first", [True, False])
-def test_longdouble_with_builtin_operand_raises(quad_first):
-    # Builtin operands become SLEEF descriptors, which is a mixed-backend call (gh-113).
+def test_longdouble_with_builtin_operand(quad_first):
     quad = _quad([1, 2], "longdouble")
     other = np.array([3.0, 4.0])
     x, y = (quad, other) if quad_first else (other, quad)
-    with pytest.raises(NotImplementedError, match="same backend"):
-        np.vecdot(x, y)
+    result = np.vecdot(x, y)
+    assert result.dtype == (x * y).dtype == QuadPrecDType(backend="longdouble")
+    assert result == QuadPrecision(11, backend="longdouble")
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
