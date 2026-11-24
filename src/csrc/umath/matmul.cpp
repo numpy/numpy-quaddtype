@@ -26,7 +26,7 @@ extern "C" {
 #include "umath/promoters.hpp"
 #include "quadblas_interface.h"
 
-// Mixed backends stay unsupported until inter-backend casts are lossless (gh-112, gh-113).
+// Same backend rule as the elementwise binary ufuncs: differing input backends run in longdouble.
 static NPY_CASTING
 quad_dot_family_resolve_descriptors(PyObject *NPY_UNUSED(self),
                                     PyArray_DTypeMeta *const NPY_UNUSED(dtypes[]),
@@ -38,31 +38,28 @@ quad_dot_family_resolve_descriptors(PyObject *NPY_UNUSED(self),
         loop_descrs[i] = NULL;
     }
 
-    QuadBackendType backend = ((QuadPrecDTypeObject *)given_descrs[0])->backend;
-    if (((QuadPrecDTypeObject *)given_descrs[1])->backend != backend ||
-        (given_descrs[2] != NULL &&
-         ((QuadPrecDTypeObject *)given_descrs[2])->backend != backend)) {
-        PyErr_SetString(PyExc_NotImplementedError,
-                        "QuadPrecision dot products require all operands to use the same "
-                        "backend");
-        return quad_resolve_descrs_fail(loop_descrs, 3);
+    QuadBackendType backend0 = ((QuadPrecDTypeObject *)given_descrs[0])->backend;
+    QuadBackendType backend = backend0;
+    NPY_CASTING casting = NPY_NO_CASTING;
+    if (((QuadPrecDTypeObject *)given_descrs[1])->backend != backend0) {
+        backend = BACKEND_LONGDOUBLE;
+        casting = NPY_SAFE_CASTING;
     }
 
-    for (int i = 0; i < 2; i++) {
-        Py_INCREF(given_descrs[i]);
-        loop_descrs[i] = given_descrs[i];
-    }
-    if (given_descrs[2] == NULL) {
-        loop_descrs[2] = (PyArray_Descr *)new_quaddtype_instance(backend);
-        if (loop_descrs[2] == NULL) {
-            return quad_resolve_descrs_fail(loop_descrs, 3);
+    for (int i = 0; i < 3; i++) {
+        if (given_descrs[i] != NULL &&
+            ((QuadPrecDTypeObject *)given_descrs[i])->backend == backend) {
+            Py_INCREF(given_descrs[i]);
+            loop_descrs[i] = given_descrs[i];
+        }
+        else {
+            loop_descrs[i] = (PyArray_Descr *)new_quaddtype_instance(backend);
+            if (loop_descrs[i] == NULL) {
+                return quad_resolve_descrs_fail(loop_descrs, 3);
+            }
         }
     }
-    else {
-        Py_INCREF(given_descrs[2]);
-        loop_descrs[2] = given_descrs[2];
-    }
-    return NPY_NO_CASTING;
+    return casting;
 }
 
 enum MatmulOperationType {
