@@ -28,7 +28,6 @@ class QuadPrecDType(np.dtype[QuadPrecision]):  # type: ignore[misc]  # pyright: 
     def backend(self) -> QuadBackend: ...
 
     # `numpy.dtype` overrides
-    names: None  # pyright: ignore[reportIncompatibleVariableOverride]
     @property
     @override
     def alignment(self) -> Literal[16]: ...
