@@ -1327,6 +1327,7 @@ except MemoryError:
 """
 
 
+@pytest.mark.thread_unsafe(reason="starts a subprocess with its own address-space limit")
 def test_gather_buffer_out_of_memory_raises():
     """A broadcast matrix is copied before QBLAS; a failed allocation must raise, not crash."""
     import subprocess
@@ -1343,6 +1344,7 @@ def test_gather_buffer_out_of_memory_raises():
         numpy_quaddtype.get_quadblas_version()
     except NotImplementedError:
         pytest.skip("without QuadBLAS the naive loop runs instead")
+    # close_fds=False: emulators such as Intel SDE need their descriptors to follow the exec.
     result = subprocess.run([sys.executable, "-c", _OUT_OF_MEMORY_CHILD],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, close_fds=False)
     assert (result.returncode, result.stdout.strip()) == (0, "MemoryError"), result.stderr
