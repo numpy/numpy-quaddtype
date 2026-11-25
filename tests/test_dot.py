@@ -496,19 +496,121 @@ class TestOutKeyword:
 
 
 class TestMixedBackend:
-    """matmul with backend-mismatched or non-SLEEF operands must fail cleanly
-    rather than crash. The exception class is loose because M2 may change
-    the longdouble path; the contract here is just 'raises, no segfault'."""
+    """Mixed backends follow the elementwise binary ufuncs: differing inputs run in longdouble."""
 
-    @pytest.mark.parametrize("backend_a,backend_b", [
-        ("sleef",      "longdouble"),
-        ("longdouble", "sleef"),
+    @pytest.mark.parametrize("backend_a,backend_b,backend_out", [
+        ("sleef",      "longdouble", None),
+        ("longdouble", "sleef",      None),
+        ("sleef",      "sleef",      "longdouble"),
+        ("longdouble", "longdouble", "sleef"),
+        ("sleef",      "longdouble", "sleef"),
     ])
-    def test_mixed_backend_raises(self, backend_a, backend_b):
-        A = np.zeros((2, 3), dtype=QuadPrecDType(backend=backend_a))
-        B = np.zeros((3, 2), dtype=QuadPrecDType(backend=backend_b))
-        with pytest.raises((TypeError, NotImplementedError)):
-            np.matmul(A, B)
+    def test_mixed_backend_matches_elementwise_rule(self, backend_a, backend_b, backend_out):
+        A = np.arange(6).reshape(2, 3).astype(QuadPrecDType(backend=backend_a))
+        B = np.arange(6).reshape(3, 2).astype(QuadPrecDType(backend=backend_b))
+        loop = (A[:1, :1] * B[:1, :1]).dtype
+        expected = np.matmul(A.astype(loop), B.astype(loop))
+        if backend_out is None:
+            result = np.matmul(A, B)
+        else:
+            out = np.zeros((2, 2), dtype=QuadPrecDType(backend=backend_out))
+            result = np.matmul(A, B, out=out)
+            assert result is out
+            expected = expected.astype(out.dtype)
+        np.testing.assert_array_equal(result, expected, strict=True)
+
+    @pytest.mark.parametrize("quad_first", [True, False])
+    def test_longdouble_with_float64_operand(self, quad_first):
+        quad = np.arange(6).reshape(2, 3).astype(QuadPrecDType(backend="longdouble"))
+        other = np.arange(6.0).reshape(3, 2)
+        a, b = (quad, other) if quad_first else (other.T, quad.T)
+        expected = np.matmul(a.astype(np.longdouble), b.astype(np.longdouble))
+        result = np.matmul(a, b)
+        assert result.dtype == QuadPrecDType(backend="longdouble")
+        np.testing.assert_array_equal(result.astype(np.longdouble), expected)
+
+
+class TestMatmulLongdoubleBackend:
+    """The longdouble backend has no QBLAS kernels and uses the strided loop,
+    which sums in the same order as NumPy's longdouble matmul, so results must
+    match it bit for bit."""
+
+    dtype = QuadPrecDType(backend="longdouble")
+
+    def _check(self, A_f, B_f, A_q=None, B_q=None, **kwargs):
+        A_q = A_f.astype(self.dtype) if A_q is None else A_q
+        B_q = B_f.astype(self.dtype) if B_q is None else B_q
+        got = np.matmul(A_q, B_q, **kwargs)
+        assert got.dtype == self.dtype
+        expected = np.matmul(A_f.astype(np.longdouble), B_f.astype(np.longdouble))
+        np.testing.assert_array_equal(np.asarray(got).astype(np.longdouble), expected,
+                                      strict=True)
+        return got
+
+    @pytest.mark.parametrize("A_shape,B_shape", [
+        ((7,), (7,)),
+        ((4, 7), (7,)),
+        ((7,), (7, 3)),
+        ((4, 7), (7, 3)),
+        ((2, 4, 7), (2, 7, 3)),
+        ((2, 1, 4, 7), (3, 7, 2)),
+        ((0, 3), (3, 4)),
+        ((2, 0), (0, 3)),
+        ((0,), (0,)),
+    ], ids=lambda s: "x".join(str(d) for d in s))
+    def test_shapes(self, A_shape, B_shape):
+        rng = np.random.default_rng(300)
+        A_f = rng.standard_normal(A_shape) * 2.0 ** rng.integers(-30, 31, A_shape)
+        B_f = rng.standard_normal(B_shape) * 2.0 ** rng.integers(-30, 31, B_shape)
+        self._check(A_f, B_f)
+
+    @pytest.mark.parametrize("layout", ["F", "T", "step2", "reversed"])
+    def test_layouts(self, layout):
+        rng = np.random.default_rng(301)
+        A_f, B_f = rng.standard_normal((8, 6)), rng.standard_normal((6, 10))
+        A_q, B_q = A_f.astype(self.dtype), B_f.astype(self.dtype)
+        if layout == "F":
+            A_q, B_q = np.asfortranarray(A_q), np.asfortranarray(B_q)
+        elif layout == "T":
+            A_f, B_f = B_f.T, A_f.T
+            A_q, B_q = B_q.T, A_q.T
+        elif layout == "step2":
+            A_f, B_f = A_f[::2, ::2], B_f[::2, ::2]
+            A_q, B_q = A_q[::2, ::2], B_q[::2, ::2]
+        elif layout == "reversed":
+            A_f, A_q = A_f[::-1, ::-1], A_q[::-1, ::-1]
+        self._check(A_f, B_f, A_q, B_q)
+
+    @pytest.mark.parametrize("order", ["C", "F"])
+    def test_out(self, order):
+        rng = np.random.default_rng(302)
+        A_f, B_f = rng.standard_normal((4, 5)), rng.standard_normal((5, 3))
+        out = np.full((4, 3), 999, dtype=self.dtype, order=order)
+        assert self._check(A_f, B_f, out=out) is out
+
+    def test_unaligned(self):
+        def unaligned(a):
+            buf = np.ndarray(a.shape, dtype=self.dtype, offset=1,
+                             buffer=bytearray(1 + a.size * self.dtype.itemsize))
+            buf[...] = a.astype(self.dtype)
+            return buf
+
+        rng = np.random.default_rng(303)
+        A_f, B_f = rng.standard_normal((4, 5)), rng.standard_normal((5, 3))
+        A_q, B_q = unaligned(A_f), unaligned(B_f)
+        assert not (A_q.flags.aligned or B_q.flags.aligned)
+        self._check(A_f, B_f, A_q, B_q)
+
+    def test_output_padding_is_zeroed(self):
+        if np.finfo(np.longdouble).nmant != 63 or self.dtype.itemsize != 16:
+            pytest.skip("requires x87 80-bit long double stored in 16 bytes")
+        storage = bytearray(b"\xa5" * 4 * self.dtype.itemsize)
+        out = np.ndarray((2, 2), dtype=self.dtype, buffer=storage)
+        np.matmul(np.ones((2, 3), self.dtype), np.ones((3, 2), self.dtype), out=out)
+        assert np.all(out == 3)
+        for i in range(4):
+            start = i * self.dtype.itemsize
+            assert bytes(storage[start + 10:start + 16]) == bytes(6)
 
 
 # ================================================================================
@@ -1199,3 +1301,56 @@ class TestMatmulCopyPath:
         assert out.shape == (7,)
         for i in range(7):
             assert abs(float(out[i]) - ref[i]) <= 1e-13 + 1e-13 * max(abs(ref[i]), 1.0)
+
+
+_OUT_OF_MEMORY_CHILD = """
+import os, resource
+import numpy as np
+from numpy_quaddtype import QuadPrecDType
+
+dtype = QuadPrecDType()
+n = 2048  # the copy of the broadcast matrix needs 64 MiB
+a = np.broadcast_to(np.ones((), dtype=dtype), (n, n))
+x = np.ones(n, dtype=dtype)
+out = np.empty_like(x)
+
+with open("/proc/self/statm") as f:
+    mapped = int(f.read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
+soft, hard = mapped + 8 * 1024**2, resource.getrlimit(resource.RLIMIT_AS)[1]
+if hard != resource.RLIM_INFINITY:
+    soft = min(soft, hard)
+resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+try:
+    bytearray(n * n * dtype.itemsize)
+    print("RLIMIT_AS not enforced")  # e.g. QEMU user-mode emulation ignores it
+except MemoryError:
+    try:
+        np.matmul(a, x, out=out)
+    except MemoryError:
+        print("MemoryError")
+"""
+
+
+@pytest.mark.thread_unsafe(reason="starts a subprocess with its own address-space limit")
+def test_gather_buffer_out_of_memory_raises():
+    """A broadcast matrix is copied before QBLAS; a failed allocation must raise, not crash."""
+    import subprocess
+    import sys
+    import sysconfig
+    import numpy_quaddtype
+
+    if sys.platform != "linux":
+        pytest.skip("needs an enforced RLIMIT_AS")
+    flags = (sysconfig.get_config_var("CFLAGS") or "") + (sysconfig.get_config_var("CONFIG_ARGS") or "")
+    if any(s in flags for s in ("-fsanitize=", "--with-address-sanitizer", "--with-thread-sanitizer")):
+        pytest.skip("sanitizer memory overhead is incompatible with RLIMIT_AS")
+    try:
+        numpy_quaddtype.get_quadblas_version()
+    except NotImplementedError:
+        pytest.skip("without QuadBLAS the naive loop runs instead")
+    # close_fds=False: emulators such as Intel SDE need their descriptors to follow the exec.
+    result = subprocess.run([sys.executable, "-c", _OUT_OF_MEMORY_CHILD],
+                            capture_output=True, text=True, close_fds=False)
+    if result.stdout.strip() == "RLIMIT_AS not enforced":
+        pytest.skip("RLIMIT_AS is not enforced here")
+    assert (result.returncode, result.stdout.strip()) == (0, "MemoryError"), result.stderr

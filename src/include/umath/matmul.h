@@ -10,6 +10,9 @@ extern "C" {
 int
 init_matmul_ops(PyObject *numpy);
 
+int
+init_vecdot_ops(PyObject *numpy);
+
 #ifdef __cplusplus
 }
 #endif

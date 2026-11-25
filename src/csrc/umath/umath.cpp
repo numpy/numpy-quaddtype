@@ -54,6 +54,10 @@ init_quad_umath(void)
         goto err;
     }
 
+    if (init_vecdot_ops(numpy) < 0) {
+        goto err;
+    }
+
     Py_DECREF(numpy);
     return 0;
 

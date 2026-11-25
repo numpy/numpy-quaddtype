@@ -152,13 +152,20 @@ NumPy QuadDType supports a comprehensive set of NumPy universal functions (ufunc
 | `np.stack` | Stack arrays |
 | `np.split` | Split array |
 
-## Linear Algebra (via QuadBLAS)
-
-When QuadBLAS is available (not on Windows):
+## Linear Algebra
 
 | Function | Description |
 |----------|-------------|
 | `np.matmul` / `@` | Matrix multiplication |
+| `np.vecdot` | Vector dot product over the last axis |
+
+Both backends are supported. With the SLEEF backend, aligned operands with
+BLAS-compatible strides use QuadBLAS; other operands, the longdouble backend,
+and builds without QuadBLAS (including Windows) use a strided loop. As with
+the elementwise ufuncs, operands of different backends are computed in the
+longdouble backend. Converting between backends currently goes through
+`float64`, so a SLEEF operand, or a result written to an `out=` of the other
+backend, keeps only double precision.
 
 ## Type Conversion
 
