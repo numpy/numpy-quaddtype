@@ -55,15 +55,9 @@ ensure_canonical(QuadPrecDTypeObject *self)
 static QuadPrecDTypeObject *
 common_instance(QuadPrecDTypeObject *dtype1, QuadPrecDTypeObject *dtype2)
 {
-    // if backend mismatch then return SLEEF one (safe to cast ld to quad)
     if (dtype1->backend != dtype2->backend) {
-        if (dtype1->backend == BACKEND_SLEEF) {
-            Py_INCREF(dtype1);
-            return dtype1;
-        }
-
-        Py_INCREF(dtype2);
-        return dtype2;
+        quad_set_backend_mismatch_error();
+        return NULL;
     }
     Py_INCREF(dtype1);
     return dtype1;
@@ -120,6 +114,10 @@ quadprec_setitem(QuadPrecDTypeObject *descr, PyObject *obj, char *dataptr)
 {
     QuadPrecisionObject *value;
     if (PyObject_TypeCheck(obj, &QuadPrecision_Type)) {
+        if (((QuadPrecisionObject *)obj)->backend != descr->backend) {
+            quad_set_backend_mismatch_error();
+            return -1;
+        }
         Py_INCREF(obj);
         value = (QuadPrecisionObject *)obj;
     }

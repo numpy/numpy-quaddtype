@@ -132,7 +132,7 @@ def test_frexp_zeroes_longdouble_padding(aligned):
 
 
 @pytest.mark.parametrize("aligned", [True, False])
-@pytest.mark.parametrize("source_backend", [None, "sleef"])
+@pytest.mark.parametrize("source_backend", [None, "longdouble"])
 def test_cast_zeroes_longdouble_padding(aligned, source_backend):
     dtype = x87_longdouble_dtype()
     if source_backend is None:

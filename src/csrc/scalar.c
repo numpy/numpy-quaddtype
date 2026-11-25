@@ -96,7 +96,23 @@ quad_from_py_int(PyObject *py_int, QuadBackendType backend, QuadPrecisionObject 
 
 QuadPrecisionObject *
 QuadPrecision_from_object(PyObject *value, QuadBackendType backend)
-{   
+{
+    // QuadPrecision is a NumPy floating scalar, so it must be handled before the
+    // NumPy scalar path, which converts through double.
+    if (PyObject_TypeCheck(value, &QuadPrecision_Type)) {
+        QuadPrecisionObject *quad_obj = (QuadPrecisionObject *)value;
+        if (quad_obj->backend != backend) {
+            quad_set_backend_mismatch_error();
+            return NULL;
+        }
+        QuadPrecisionObject *self = QuadPrecision_raw_new(backend);
+        if (self == NULL) {
+            return NULL;
+        }
+        self->value = quad_obj->value;
+        return self;
+    }
+
     // Handle numpy scalars (np.int32, np.float32, etc.) before arrays
     // We need to check this before PySequence_Check because some numpy scalars are sequences
     if (PyArray_CheckScalar(value)) {
@@ -246,23 +262,6 @@ QuadPrecision_from_object(PyObject *value, QuadBackendType backend)
     }
     else if (PyLong_Check(value)) {
         return quad_from_py_int(value, backend, self);
-    }
-    else if (Py_TYPE(value) == &QuadPrecision_Type) {
-        Py_DECREF(self);  // discard the default one
-        QuadPrecisionObject *quad_obj = (QuadPrecisionObject *)value;
-        // create a new one with the same backend
-        QuadPrecisionObject *self = QuadPrecision_raw_new(quad_obj->backend);
-        if (self == NULL) {
-            return NULL;
-        }
-        if (quad_obj->backend == BACKEND_SLEEF) {
-            self->value.sleef_value = quad_obj->value.sleef_value;
-        }
-        else {
-            self->value.longdouble_value = quad_obj->value.longdouble_value;
-        }
-
-        return self;
     }
     else {
         PyObject *type_str = PyObject_Str((PyObject *)Py_TYPE(value));
