@@ -1321,9 +1321,13 @@ if hard != resource.RLIM_INFINITY:
     soft = min(soft, hard)
 resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
 try:
-    np.matmul(a, x, out=out)
+    bytearray(n * n * dtype.itemsize)
+    print("RLIMIT_AS not enforced")  # e.g. QEMU user-mode emulation ignores it
 except MemoryError:
-    print("MemoryError")
+    try:
+        np.matmul(a, x, out=out)
+    except MemoryError:
+        print("MemoryError")
 """
 
 
@@ -1347,4 +1351,6 @@ def test_gather_buffer_out_of_memory_raises():
     # close_fds=False: emulators such as Intel SDE need their descriptors to follow the exec.
     result = subprocess.run([sys.executable, "-c", _OUT_OF_MEMORY_CHILD],
                             capture_output=True, text=True, close_fds=False)
+    if result.stdout.strip() == "RLIMIT_AS not enforced":
+        pytest.skip("RLIMIT_AS is not enforced here")
     assert (result.returncode, result.stdout.strip()) == (0, "MemoryError"), result.stderr
