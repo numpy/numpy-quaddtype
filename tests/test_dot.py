@@ -1303,14 +1303,46 @@ class TestMatmulCopyPath:
             assert abs(float(out[i]) - ref[i]) <= 1e-13 + 1e-13 * max(abs(ref[i]), 1.0)
 
 
+_OUT_OF_MEMORY_CHILD = """
+import os, resource
+import numpy as np
+from numpy_quaddtype import QuadPrecDType
+
+dtype = QuadPrecDType()
+n = 2048  # the copy of the broadcast matrix needs 64 MiB
+a = np.broadcast_to(np.ones((), dtype=dtype), (n, n))
+x = np.ones(n, dtype=dtype)
+out = np.empty_like(x)
+
+with open("/proc/self/statm") as f:
+    mapped = int(f.read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
+soft, hard = mapped + 8 * 1024**2, resource.getrlimit(resource.RLIMIT_AS)[1]
+if hard != resource.RLIM_INFINITY:
+    soft = min(soft, hard)
+resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+try:
+    np.matmul(a, x, out=out)
+except MemoryError:
+    print("MemoryError")
+"""
+
+
 def test_gather_buffer_out_of_memory_raises():
     """A broadcast matrix is copied before QBLAS; a failed allocation must raise, not crash."""
+    import subprocess
+    import sys
+    import sysconfig
     import numpy_quaddtype
+
+    if sys.platform != "linux":
+        pytest.skip("needs an enforced RLIMIT_AS")
+    flags = (sysconfig.get_config_var("CFLAGS") or "") + (sysconfig.get_config_var("CONFIG_ARGS") or "")
+    if any(s in flags for s in ("-fsanitize=", "--with-address-sanitizer", "--with-thread-sanitizer")):
+        pytest.skip("sanitizer memory overhead is incompatible with RLIMIT_AS")
     try:
         numpy_quaddtype.get_quadblas_version()
     except NotImplementedError:
         pytest.skip("without QuadBLAS the naive loop runs instead")
-    n = 2**23
-    A = np.broadcast_to(np.ones((), QuadPrecDType()), (n, n))
-    with pytest.raises(MemoryError):
-        A @ np.ones(n, QuadPrecDType())
+    result = subprocess.run([sys.executable, "-c", _OUT_OF_MEMORY_CHILD],
+                            capture_output=True, text=True)
+    assert (result.returncode, result.stdout.strip()) == (0, "MemoryError"), result.stderr
