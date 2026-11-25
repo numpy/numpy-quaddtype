@@ -12,8 +12,8 @@ project = 'NumPy QuadDType'
 year = datetime.now().year
 copyright = f'2024-{year}, NumPy Developers'
 author = 'Written by the NumPy community'
-release = '1.0.0'
-version = '1.0.0'
+release = '1.1.0'
+version = '1.1.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
